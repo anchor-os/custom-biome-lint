@@ -1,0 +1,39 @@
+[package]
+name = "custom-biome-lint"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone linting tool for Reselect/Redux patterns not in Biome"
+license = "MIT"
+repository = "https://github.com/anchor/custom-biome-lint"
+readme = "README.md"
+
+[lib]
+name = "custom_biome_lint"
+path = "src/lib.rs"
+
+[[bin]]
+name = "custom-biome-lint"
+path = "src/bin/custom-biome-lint.rs"
+
+# Pinned exactly: biome_rowan 0.5.8 is a breaking change (SyntaxKind::is_trivia,
+# reshaped FileSourceError) that biome_js_syntax 0.5.7 does not compile against,
+# and semver unification otherwise pulls 0.5.8 in transitively.
+#
+# biome_parser, biome_diagnostics and biome_console are not used directly. They
+# are listed only to hold the whole graph at 0.5.7: without them cargo resolves
+# them to 0.5.8, which fails to build against rowan 0.5.7.
+[dependencies]
+biome_js_parser = "=0.5.7"
+biome_js_syntax = "=0.5.7"
+biome_rowan = "=0.5.7"
+biome_parser = "=0.5.7"
+biome_diagnostics = "=0.5.7"
+biome_console = "=0.5.7"
+serde_json = "1"
+rayon = "1.7"
+
+[dev-dependencies]
+tempfile = "3.8"
+
+[profile.release]
+opt-level = 3
