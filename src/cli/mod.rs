@@ -147,10 +147,11 @@ where
     // Mark analyzed files as cached
     let mut cache_hits = 0usize;
     for (file, analyzed) in &analyzed_files {
-        if analyzed.parsed_cleanly && analyzed.violations.is_empty() {
-            if let Ok(_) = cache.mark_valid(file, &rule_hash) {
-                cache_hits += 1;
-            }
+        if analyzed.parsed_cleanly
+            && analyzed.violations.is_empty()
+            && cache.mark_valid(file, &rule_hash).is_ok()
+        {
+            cache_hits += 1;
         }
     }
 

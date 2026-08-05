@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build (release)
+        run: cargo build --release --verbose
+
+      - name: Test
+        run: cargo test --verbose
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Smoke test against fixtures
+        # fixtures/ deliberately contains violations (invalid.js per rule), so
+        # the binary is expected to exit 1. Any other exit code (0 = found
+        # nothing, 2 = usage/crash) means something is actually broken.
+        run: |
+          ./target/release/custom-biome-lint fixtures
+          code=$?
+          if [ "$code" -ne 1 ]; then
+            echo "expected exit code 1 (violations found), got $code"
+            exit 1
+          fi
