@@ -15,7 +15,10 @@ Add this dependency to `package.json`, then run yarn/npm install:
 
 This is a Rust CLI wrapped as an npm package. Installing it will run a
 postinstall step (`cargo build --release`) — the Rust toolchain (`cargo`)
-must be available on the machine/CI image doing the install.
+must be available on the machine/CI image doing the install. Because the
+dependency is fetched via a `github:` spec, npm/yarn also shell out to the
+`git` executable to resolve it — make sure `git` is installed alongside
+`cargo`, on both local machines and CI/container images.
 
 After install, run it via:
 
