@@ -238,6 +238,9 @@ src/
 fixtures/<rule_name>/        valid.js, invalid.js, suppressed.js per rule
 tests/integration.rs         end-to-end rule, config and pattern tests
 docs/                        architecture, rules, testing, setup, CI, migration
+.github/workflows/ci.yml     build, test, fmt, clippy, audit, deny
+rustfmt.toml                 formatting config (cargo fmt)
+deny.toml                    license/advisory/source policy (cargo deny)
 ```
 
 ## Portability
@@ -258,7 +261,10 @@ them or loosen the pins** — see
 
 ```sh
 cargo test                                    # 62 tests: 38 unit + 23 integration + 1 doctest
-cargo clippy --all-targets                    # no warnings expected
+cargo fmt --all -- --check                    # no diff expected
+cargo clippy --all-targets -- -D warnings     # no warnings expected
+cargo audit                                   # no advisories beyond .cargo/audit.toml's ignore list
+cargo deny check                              # licenses, bans, sources all ok
 ./target/release/custom-biome-lint fixtures   # 7 errors across 3 files
 ```
 
