@@ -165,7 +165,7 @@ lint:
   - yarn eslint
   - yarn prettier:check
   except:
-    - tags@hornblower/dashboard
+    - tags@your-org/your-app
 
 lintmr:
   stage: test and build stage
@@ -189,7 +189,7 @@ lint:
   - yarn lint:custom:build
   - yarn lint:custom
   except:
-    - tags@hornblower/dashboard
+    - tags@your-org/your-app
 
 lintmr:
   stage: test and build stage
@@ -229,7 +229,7 @@ which check broke, and can use a Rust image without touching the Node jobs.
 custom-lint:
   <<: *custom_lint
   except:
-    - tags@hornblower/dashboard
+    - tags@your-org/your-app
 
 custom-lint-mr:
   <<: *custom_lint

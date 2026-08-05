@@ -31,7 +31,7 @@ One upstream repo, each consumer pinned to a tag. Full walkthrough in
 
 ```sh
 git submodule add \
-  git@gitlab.com:hornblower/custom-biome-lint.git \
+  git@gitlab.com:your-org/custom-biome-lint.git \
   tools/custom-biome-lint
 git commit -m "chore: add custom-biome-lint as a submodule"
 ```
@@ -246,7 +246,7 @@ The sequence to put in the project's contributing guide:
 
 ```sh
 # 1. Clone with submodules (Option 1; plain clone otherwise).
-git clone --recurse-submodules git@gitlab.com:hornblower/dashboard.git
+git clone --recurse-submodules git@gitlab.com:your-org/your-app.git
 cd dashboard
 
 # Already cloned without them?

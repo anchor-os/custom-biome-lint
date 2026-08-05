@@ -83,6 +83,12 @@ impl Reporter {
         }
     }
 
+    /// Prints a plain status line, unconditional and un-prefixed (unlike
+    /// `warn`/`error`), for routine end-of-run notices such as cache location.
+    pub fn info(&self, message: &str) {
+        println!("{message}");
+    }
+
     pub fn warn(&self, message: &str) {
         eprintln!("custom-biome-lint: warning: {message}");
     }

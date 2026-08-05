@@ -103,7 +103,7 @@ Recommended additions before a first publish:
   ],
   "repository": {
     "type": "git",
-    "url": "https://gitlab.com/hornblower/custom-biome-lint.git"
+    "url": "https://gitlab.com/your-org/custom-biome-lint.git"
   },
   "engines": { "node": ">=18" }
 }
@@ -120,7 +120,7 @@ npm whoami         # confirm
 ```
 
 For a scoped, private package — likely the right choice for an internal tool —
-name it `@hornblower/custom-biome-lint` and publish with `--access restricted`.
+name it `@your-org/custom-biome-lint` and publish with `--access restricted`.
 Scoped packages are private by default; unscoped ones are always public. Check
 which you want before the first publish, because **a published version number can
 never be reused**, even after `npm unpublish`.

@@ -2,18 +2,18 @@
   "name": "custom-biome-lint",
   "version": "0.1.0",
   "description": "Standalone linting tool for Reselect/Redux patterns not in Biome",
-  "main": "target/release/custom-biome-lint",
   "bin": {
-    "custom-biome-lint": "target/release/custom-biome-lint"
+    "custom-biome-lint": "bin/cli.js"
   },
   "scripts": {
     "build": "cargo build --release",
+    "postinstall": "cargo build --release",
     "test": "cargo test",
     "lint": "cargo clippy"
   },
   "files": [
+    "bin",
     "src",
-    "docs",
     "Cargo.toml",
     "Cargo.lock",
     "README.md"

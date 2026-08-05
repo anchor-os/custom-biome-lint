@@ -22,7 +22,7 @@ package** when consumers must not need a Rust toolchain.
 cd /path/to/consuming-repo
 
 git submodule add \
-  git@gitlab.com:hornblower/custom-biome-lint.git \
+  git@gitlab.com:your-org/custom-biome-lint.git \
   tools/custom-biome-lint
 
 git commit -m "chore: add custom-biome-lint as a submodule"
@@ -53,7 +53,7 @@ than `main`:
 ```ini
 [submodule "tools/custom-biome-lint"]
 	path = tools/custom-biome-lint
-	url = git@gitlab.com:hornblower/custom-biome-lint.git
+	url = git@gitlab.com:your-org/custom-biome-lint.git
 	branch = v0.1.0
 ```
 
@@ -63,7 +63,7 @@ underneath you turns an unrelated PR red.
 ## Clone a repo that has the submodule
 
 ```sh
-git clone --recurse-submodules git@gitlab.com:hornblower/dashboard.git
+git clone --recurse-submodules git@gitlab.com:your-org/your-app.git
 ```
 
 If someone already cloned without it — the submodule directory will be present but

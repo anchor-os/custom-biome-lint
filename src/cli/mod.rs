@@ -153,9 +153,11 @@ where
     }
 
     // Save cache for next run
-    if !args.no_cache {
-        let _ = cache.save();
-    }
+    let cache_saved = if !args.no_cache {
+        cache.save().is_ok()
+    } else {
+        false
+    };
 
     // Build reports
     let mut reports = Vec::new();
@@ -208,6 +210,10 @@ where
         let fixed = Fixer::apply_suppressions(&to_fix, !args.dry_run);
         reporter.print_fix_report(&fixed, cwd);
 
+        if cache_saved {
+            report_cache_location(&reporter, &cache, cwd);
+        }
+
         // A dry run leaves the violations in place, so it reports failure
         // whenever there is anything left to write.
         let clean = fixed.is_complete() && (fixed.wrote || fixed.changes.is_empty());
@@ -222,11 +228,25 @@ where
     totals.elapsed = start.elapsed();
     reporter.print_report(&reports, &totals);
 
+    if cache_saved {
+        report_cache_location(&reporter, &cache, cwd);
+    }
+
     if totals.errors > 0 {
         ExitCode::from(EXIT_VIOLATIONS)
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// Prints where the incremental cache was written, relative to the run
+/// directory, so it's obvious that a `.custom-biome-lint-cache/` directory
+/// showing up in the project is this tool and not stray npm state.
+fn report_cache_location(reporter: &Reporter, cache: &CacheManager, cwd: &Path) {
+    reporter.info(&format!(
+        "cache saved at {}",
+        display_path(cache.cache_dir(), cwd).display()
+    ));
 }
 
 /// Warns when an explicit pattern targets extensions no rule can analyze.

@@ -19,9 +19,11 @@ struct CacheEntry {
 }
 
 impl CacheManager {
-    /// Create a cache manager with cache directory in node_modules/.custom-biome-lint-cache/
+    /// Create a cache manager with cache directory in .custom-biome-lint-cache/,
+    /// created on first run. Not nested under node_modules — this tool has no
+    /// npm dependencies of its own and shouldn't imply that it does.
     pub fn new(cwd: &Path) -> Result<Self, String> {
-        let cache_dir = cwd.join("node_modules/.custom-biome-lint-cache");
+        let cache_dir = cwd.join(".custom-biome-lint-cache");
         Ok(Self {
             cache_dir,
             cache_data: HashMap::new(),
@@ -142,6 +144,11 @@ impl CacheManager {
     pub fn stats(&self) -> (usize, usize) {
         (self.cache_data.len(), 0) // (cached_files, cache_hits - computed per run)
     }
+
+    /// Path to the cache directory (where cache.json is written on save()).
+    pub fn cache_dir(&self) -> &Path {
+        &self.cache_dir
+    }
 }
 
 #[cfg(test)]
@@ -168,7 +175,7 @@ mod tests {
         manager.save().unwrap();
 
         // Verify cache file exists
-        let cache_file = tmpdir.path().join("node_modules/.custom-biome-lint-cache/cache.json");
+        let cache_file = tmpdir.path().join(".custom-biome-lint-cache/cache.json");
         assert!(cache_file.exists());
     }
 
@@ -227,7 +234,7 @@ mod tests {
     #[test]
     fn corrupted_cache_is_recovered() {
         let tmpdir = TempDir::new().unwrap();
-        let cache_dir = tmpdir.path().join("node_modules/.custom-biome-lint-cache");
+        let cache_dir = tmpdir.path().join(".custom-biome-lint-cache");
         fs::create_dir_all(&cache_dir).unwrap();
         fs::write(cache_dir.join("cache.json"), "invalid json").unwrap();
 
