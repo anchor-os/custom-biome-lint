@@ -8,11 +8,16 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -34,8 +39,10 @@ jobs:
         # the binary is expected to exit 1. Any other exit code (0 = found
         # nothing, 2 = usage/crash) means something is actually broken.
         run: |
+          set +e
           ./target/release/custom-biome-lint fixtures
           code=$?
+          set -e
           if [ "$code" -ne 1 ]; then
             echo "expected exit code 1 (violations found), got $code"
             exit 1
