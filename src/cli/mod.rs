@@ -1,8 +1,10 @@
 pub mod args;
 pub mod output;
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
@@ -294,9 +296,14 @@ fn display_path(path: &Path, cwd: &Path) -> PathBuf {
 
 /// Compute a hash of all enabled rules to detect rule changes.
 fn compute_rule_hash(rules: &[&dyn crate::Rule]) -> String {
-    let rule_names = rules.iter().map(|r| r.name()).collect::<Vec<_>>().join(",");
-    // Simple hash: just concatenate rule names
-    format!("{:x}", rule_names.len())
+    // Sorted so the hash is independent of registration order, and joined with
+    // a separator so `["ab", "c"]` and `["a", "bc"]` cannot collide.
+    let mut rule_names: Vec<&str> = rules.iter().map(|r| r.name()).collect();
+    rule_names.sort_unstable();
+
+    let mut hasher = DefaultHasher::new();
+    rule_names.join(",").hash(&mut hasher);
+    format!("{:x}", hasher.finish())
 }
 
 /// Analyze files sequentially.
