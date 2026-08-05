@@ -113,11 +113,7 @@ pub fn format_summary(totals: &Totals) -> String {
 
     let mut counts = Vec::new();
     if totals.errors > 0 {
-        counts.push(format!(
-            "{} error{}",
-            totals.errors,
-            plural(totals.errors)
-        ));
+        counts.push(format!("{} error{}", totals.errors, plural(totals.errors)));
     }
     if totals.warnings > 0 {
         counts.push(format!(

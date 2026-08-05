@@ -108,7 +108,10 @@ mod no_native_map {
         let source = "import { Map } from 'not-immutable';\nconst m = new Map();\n";
         let violations = check_source("no-native-map", source, Path::new("a.js"));
         assert_eq!(violations.len(), 1, "got {violations:?}");
-        assert_eq!(violations[0].line, 2, "the import specifier itself is exempt");
+        assert_eq!(
+            violations[0].line, 2,
+            "the import specifier itself is exempt"
+        );
     }
 }
 

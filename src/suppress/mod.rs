@@ -85,14 +85,13 @@ pub fn find_suppression_comments(source: &str) -> Vec<SuppressionComment> {
 
         // Checked before IGNORE_LINE only for clarity; the two markers are not
         // substrings of one another, so order does not affect matching.
-        let (marker, target_line, marker_pos) =
-            if let Some(pos) = comment.find(IGNORE_NEXT_LINE) {
-                (IGNORE_NEXT_LINE, line_no + 1, pos)
-            } else if let Some(pos) = comment.find(IGNORE_LINE) {
-                (IGNORE_LINE, line_no, pos)
-            } else {
-                continue;
-            };
+        let (marker, target_line, marker_pos) = if let Some(pos) = comment.find(IGNORE_NEXT_LINE) {
+            (IGNORE_NEXT_LINE, line_no + 1, pos)
+        } else if let Some(pos) = comment.find(IGNORE_LINE) {
+            (IGNORE_LINE, line_no, pos)
+        } else {
+            continue;
+        };
 
         let rest_offset = body_offset + marker_pos + marker.len();
         let (rules, rules_end) = parse_rule_names(&text[rest_offset..]);

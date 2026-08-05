@@ -148,7 +148,10 @@ impl Fixer {
 pub fn plan_file(path: &Path, source: &str, violations: &[Violation]) -> FilePlan {
     let mut wanted: BTreeMap<usize, BTreeSet<&str>> = BTreeMap::new();
     for violation in violations {
-        wanted.entry(violation.line).or_default().insert(violation.rule);
+        wanted
+            .entry(violation.line)
+            .or_default()
+            .insert(violation.rule);
     }
 
     let unchanged = |unfixable| FilePlan {
@@ -255,10 +258,7 @@ pub fn plan_file(path: &Path, source: &str, violations: &[Violation]) -> FilePla
         // the "comment" would become string or comment content.
         if start_state == Lex::Code {
             let in_jsx = jsx.contains(line_start);
-            let indent: String = content
-                .chars()
-                .take_while(|c| c.is_whitespace())
-                .collect();
+            let indent: String = content.chars().take_while(|c| c.is_whitespace()).collect();
             let comment = comment_text(IGNORE_NEXT_LINE, &rules, in_jsx);
             prefix_inserts.insert(line, format!("{indent}{comment}"));
             changes.push(FileChange {
@@ -288,7 +288,11 @@ pub fn plan_file(path: &Path, source: &str, violations: &[Violation]) -> FilePla
     // Cheap insurance against a placement bug silently producing a file whose
     // suppressions do not actually apply.
     if !verify(path, &rewritten, &changes, &line_map) {
-        unfixable.extend(all_unfixable(path, &wanted, "suppression could not be verified"));
+        unfixable.extend(all_unfixable(
+            path,
+            &wanted,
+            "suppression could not be verified",
+        ));
         return unchanged(unfixable);
     }
 
@@ -332,7 +336,8 @@ fn emit(
     appends: &HashMap<usize, String>,
     merges: &HashMap<usize, (usize, String)>,
 ) -> (String, HashMap<usize, usize>) {
-    let mut out = String::with_capacity(lines.iter().map(|(c, e)| c.len() + e.len()).sum::<usize>() + 256);
+    let mut out =
+        String::with_capacity(lines.iter().map(|(c, e)| c.len() + e.len()).sum::<usize>() + 256);
     let mut line_map = HashMap::new();
     let mut emitted = 0usize;
 
@@ -673,7 +678,10 @@ mod tests {
 
     #[test]
     fn crlf_endings_and_a_missing_final_newline_round_trip() {
-        let plan = plan("const a = 1;\r\nconst m = new Map();", &[(2, "no-native-map")]);
+        let plan = plan(
+            "const a = 1;\r\nconst m = new Map();",
+            &[(2, "no-native-map")],
+        );
         assert_eq!(
             plan.source,
             "const a = 1;\r\nconst m = new Map(); // biome-ignore-line no-native-map"
