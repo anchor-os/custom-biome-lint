@@ -3,7 +3,7 @@
 From fastest to most realistic:
 
 1. `cargo test` — unit, integration and doctests
-2. `cargo fmt --check` — formatting
+2. `cargo fmt --all -- --check` — formatting
 3. `cargo clippy --all-targets` — lint the linter
 4. `cargo audit` / `cargo deny check` — dependency advisories, licenses, sources
 5. Run the binary against `fixtures/` — known-good end-to-end check
@@ -99,8 +99,8 @@ cargo test --doc
 cargo fmt --all -- --check
 ```
 
-Expected: **no diff**. `rustfmt.toml` pins `edition = "2021"`; run `cargo fmt`
-(without `--check`) to apply the fix rather than just report it.
+Expected: **no diff**. `rustfmt.toml` pins `edition = "2021"`; run `cargo fmt
+--all` (without `-- --check`) to apply the fix rather than just report it.
 
 ## 3. Clippy
 
