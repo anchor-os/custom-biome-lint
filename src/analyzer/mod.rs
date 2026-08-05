@@ -4,6 +4,8 @@ pub mod runner;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use rayon::prelude::*;
+
 pub use file_matcher::GlobSet;
 pub use runner::{analyze_file, AnalyzedFile, FileContext};
 
@@ -27,27 +29,36 @@ pub struct Discovery {
 
 /// Walks `root`-relative paths under the pattern's literal prefix and keeps the
 /// ones the pattern matches. Returns paths relative to `root`, sorted.
+///
+/// Subdirectories are walked concurrently on rayon's global thread pool: each
+/// directory's `read_dir` and match check is small, but a tree with hundreds
+/// of directories turns into hundreds of blocking syscalls if done one at a
+/// time, so this fans them out and merges the per-directory results.
 pub fn discover_files(pattern: &GlobSet, root: &Path) -> Discovery {
-    let mut discovery = Discovery::default();
     let start = root.join(pattern.root_dir());
 
     if start.is_file() {
-        discovery.files_considered += 1;
-        discovery.files.push(start.clone());
-        return discovery;
+        return Discovery {
+            files: vec![start],
+            dirs_scanned: 0,
+            dirs_skipped: Vec::new(),
+            files_considered: 1,
+        };
     }
 
-    walk(&start, root, pattern, &mut discovery);
+    let mut discovery = walk(&start, root, pattern);
     discovery.files.sort();
     discovery
 }
 
-fn walk(dir: &Path, root: &Path, pattern: &GlobSet, discovery: &mut Discovery) {
+fn walk(dir: &Path, root: &Path, pattern: &GlobSet) -> Discovery {
+    let mut discovery = Discovery::default();
     let Ok(entries) = fs::read_dir(dir) else {
-        return;
+        return discovery;
     };
     discovery.dirs_scanned += 1;
 
+    let mut subdirs = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name();
@@ -58,7 +69,7 @@ fn walk(dir: &Path, root: &Path, pattern: &GlobSet, discovery: &mut Discovery) {
                 discovery.dirs_skipped.push(path);
                 continue;
             }
-            walk(&path, root, pattern, discovery);
+            subdirs.push(path);
         } else {
             discovery.files_considered += 1;
             if pattern.is_match(&file_matcher::match_key(&path, root, pattern)) {
@@ -66,6 +77,24 @@ fn walk(dir: &Path, root: &Path, pattern: &GlobSet, discovery: &mut Discovery) {
             }
         }
     }
+
+    let merged = subdirs
+        .into_par_iter()
+        .map(|path| walk(&path, root, pattern))
+        .reduce(Discovery::default, |mut a, b| {
+            a.dirs_scanned += b.dirs_scanned;
+            a.files_considered += b.files_considered;
+            a.files.extend(b.files);
+            a.dirs_skipped.extend(b.dirs_skipped);
+            a
+        });
+
+    discovery.dirs_scanned += merged.dirs_scanned;
+    discovery.files_considered += merged.files_considered;
+    discovery.files.extend(merged.files);
+    discovery.dirs_skipped.extend(merged.dirs_skipped);
+
+    discovery
 }
 
 /// Accepts a bare directory as shorthand for "every supported file under it",
