@@ -1,0 +1,47 @@
+# Supply-chain policy for `cargo deny check`. Trimmed to what this project
+# actually needs — see https://embarkstudios.github.io/cargo-deny/ for the
+# full set of options this omits.
+
+[graph]
+all-features = false
+no-default-features = false
+
+[advisories]
+# Mirrors .cargo/audit.toml: proc-macro-error is unmaintained, but it is a
+# build-time-only proc-macro dependency pulled in transitively by Biome
+# crates pinned to =0.5.7 (see Cargo.toml), with no upstream fix available.
+ignore = [
+    { id = "RUSTSEC-2024-0370", reason = "unmaintained proc-macro-error, build-time-only, transitive via biome_* pinned to =0.5.7 — see .cargo/audit.toml" },
+]
+
+[licenses]
+# Every license actually present in the dependency tree today, all
+# permissive. Adding a dependency under a different license is meant to fail
+# this check until it's deliberately added here.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "0BSD",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "MIT-0",
+    "Zlib",
+    "Unlicense",
+]
+confidence-threshold = 0.8
+
+[licenses.private]
+# This crate is not published, so its own (MIT) license need not appear
+# in the allow list above.
+ignore = true
+
+[bans]
+# Duplicate versions are common in a graph this size and not a policy
+# violation on their own — warn so they're visible without failing CI.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

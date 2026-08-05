@@ -43,10 +43,10 @@ impl CacheManager {
                     Ok(json) => {
                         if let Some(entries) = json.get("entries").and_then(|v| v.as_object()) {
                             for (path, entry) in entries {
-                                if let (Some(mtime), Some(rule_hash)) =
-                                    (entry.get("mtime").and_then(|v| v.as_u64()),
-                                     entry.get("rule_hash").and_then(|v| v.as_str()))
-                                {
+                                if let (Some(mtime), Some(rule_hash)) = (
+                                    entry.get("mtime").and_then(|v| v.as_u64()),
+                                    entry.get("rule_hash").and_then(|v| v.as_str()),
+                                ) {
                                     self.cache_data.insert(
                                         path.clone(),
                                         CacheEntry {

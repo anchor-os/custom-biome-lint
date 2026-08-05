@@ -42,7 +42,12 @@ impl Violation {
         }
     }
 
-    pub fn warning(rule: &'static str, line: usize, col: usize, message: impl Into<String>) -> Self {
+    pub fn warning(
+        rule: &'static str,
+        line: usize,
+        col: usize,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             rule,
             line,

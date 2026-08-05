@@ -1,11 +1,13 @@
 # Testing
 
-Four layers, from fastest to most realistic:
+From fastest to most realistic:
 
-1. `cargo test` — unit, integration and doctests (62 tests)
-2. `cargo clippy --all-targets` — lint the linter
-3. Run the binary against `fixtures/` — known-good end-to-end check
-4. Run the binary against the real dashboard `src/` tree — parity check
+1. `cargo test` — unit, integration and doctests
+2. `cargo fmt --all -- --check` — formatting
+3. `cargo clippy --all-targets` — lint the linter
+4. `cargo audit` / `cargo deny check` — dependency advisories, licenses, sources
+5. Run the binary against `fixtures/` — known-good end-to-end check
+6. Run the binary against the real dashboard `src/` tree — parity check
 
 Plus a one-off portability check documented at the end.
 
@@ -91,7 +93,16 @@ compiling.
 cargo test --doc
 ```
 
-## 2. Clippy
+## 2. Formatting
+
+```sh
+cargo fmt --all -- --check
+```
+
+Expected: **no diff**. `rustfmt.toml` pins `edition = "2021"`; run `cargo fmt
+--all` (without `-- --check`) to apply the fix rather than just report it.
+
+## 3. Clippy
 
 ```sh
 cargo clippy --all-targets
@@ -106,7 +117,29 @@ To hold the line in CI, escalate warnings to errors:
 cargo clippy --all-targets -- -D warnings
 ```
 
-## 3. Against the fixtures
+## 4. Supply chain: `cargo audit` / `cargo deny`
+
+```sh
+cargo audit
+cargo deny check
+```
+
+Both read from configuration already in the repo rather than needing flags:
+`.cargo/audit.toml` for `cargo audit`, `deny.toml` for `cargo deny`.
+
+Expected: **no errors** from either. `cargo audit` checks `Cargo.lock` against
+the RUSTSEC advisory database; `cargo deny check` additionally verifies every
+dependency's license is on the allow list in `deny.toml`, and that nothing
+resolves from an unexpected registry or git source. `deny.toml`'s
+`multiple-versions = "warn"` means duplicate transitive versions (e.g. two
+versions of `syn`) print as noise, not failures — that's expected for a
+dependency graph this size and not itself a problem to fix.
+
+Both tools are installed from prebuilt binaries in CI (`taiki-e/install-action`)
+rather than compiled from source, and are not part of what ships in the
+package — they only run as CI/dev checks against `Cargo.lock`.
+
+## 5. Against the fixtures
 
 The fastest end-to-end check with a known-exact expected result.
 
@@ -153,7 +186,7 @@ Verify the exit code, since CI depends on it:
 | 1 | Violations found |
 | 2 | Bad usage, or the pattern's root directory does not exist |
 
-## 4. Against the real dashboard tree
+## 6. Against the real dashboard tree
 
 Run from `UI/dashboard` (the directory containing `src/`), pointing at the built
 binary:
@@ -242,7 +275,7 @@ and this captures just the logs:
 If a file fails to parse, the tool warns on stderr rather than skipping silently
 — an unparseable file would otherwise look identical to a clean one in CI.
 
-## 5. Portability check
+## 7. Portability check
 
 The package is meant to be liftable into its own repository, published to npm, or
 vendored as a submodule with no edits. Verifying that means building it somewhere
@@ -284,11 +317,30 @@ extracting the package to its own repository.
 ## Full pre-commit sweep
 
 ```sh
-cargo test \
+cargo fmt --all -- --check \
+  && cargo test \
   && cargo clippy --all-targets -- -D warnings \
+  && cargo audit \
+  && cargo deny check \
   && cargo build --release \
-  && ./target/release/custom-biome-lint fixtures
+  && (
+    set +e
+    ./target/release/custom-biome-lint fixtures
+    code=$?
+    set -e
+    test "$code" -eq 1
+  )
 ```
 
-The last command exits 1 by design (the fixtures contain deliberate violations),
-so in a script either run it last or check for exactly `1`.
+The fixtures command is expected to exit 1 (the fixtures contain deliberate
+violations), which would otherwise break the `&&` chain — `test "$code" -eq 1`
+converts that specific, expected status back into success so the whole
+sweep's own exit code reports whether anything is *actually* wrong. `code`
+rather than `status`, since `status` is a read-only special variable in zsh —
+assigning to it fails outright if this is pasted into a zsh shell, which is
+the default on macOS.
+
+`cargo audit` and `cargo deny` require the respective binaries installed
+locally (`cargo install cargo-audit cargo-deny`, or `brew install cargo-audit
+cargo-deny`) — CI installs them fresh on every run instead, so a missing local
+install only affects this sweep, not the pipeline.

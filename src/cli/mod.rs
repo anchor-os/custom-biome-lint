@@ -62,7 +62,11 @@ where
     }
     match &config.source {
         Some(path) => vlog!(reporter, 1, "config: {}", path.display()),
-        None => vlog!(reporter, 1, "config: no package.json found; all rules enabled"),
+        None => vlog!(
+            reporter,
+            1,
+            "config: no package.json found; all rules enabled"
+        ),
     }
 
     let rules = registry.enabled(&config);
@@ -76,7 +80,12 @@ where
         );
         reporter.print_rules(&registry);
         for ignored in registry.ignored(&config) {
-            vlog!(reporter, 1, "skipping {} (ignored by config)", ignored.name());
+            vlog!(
+                reporter,
+                1,
+                "skipping {} (ignored by config)",
+                ignored.name()
+            );
         }
     }
 
@@ -279,7 +288,12 @@ fn report_pattern_extensions(pattern: &GlobSet, registry: &RuleRegistry, reporte
         .collect();
 
     if unsupported.is_empty() {
-        vlog!(reporter, 1, "pattern extensions ok: {}", requested.join(", "));
+        vlog!(
+            reporter,
+            1,
+            "pattern extensions ok: {}",
+            requested.join(", ")
+        );
         return;
     }
 

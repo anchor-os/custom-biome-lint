@@ -88,7 +88,10 @@ fn is_bare_create_selector_body(arrow: &JsArrowFunctionExpression) -> bool {
 /// ESLint rule's direct-parent check. In Biome's tree that is
 /// `JsVariableDeclarator > JsInitializerClause > JsArrowFunctionExpression`.
 fn enclosing_declarator(arrow: &JsArrowFunctionExpression) -> Option<JsVariableDeclarator> {
-    let initializer = arrow.syntax().parent().and_then(JsInitializerClause::cast)?;
+    let initializer = arrow
+        .syntax()
+        .parent()
+        .and_then(JsInitializerClause::cast)?;
     initializer
         .syntax()
         .parent()

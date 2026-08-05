@@ -118,7 +118,8 @@ impl ImmutableBindings {
         let Ok(arguments) = call.arguments() else {
             return;
         };
-        let Some(AnyJsCallArgument::AnyJsExpression(first)) = arguments.args().iter().flatten().next()
+        let Some(AnyJsCallArgument::AnyJsExpression(first)) =
+            arguments.args().iter().flatten().next()
         else {
             return;
         };
@@ -185,16 +186,20 @@ impl ImmutableBindings {
 /// the ESLint rule's `ImportSpecifier` exemption.
 fn native_map_reference(node: &JsSyntaxNode) -> Option<usize> {
     let is_map = match node.kind() {
-        JsSyntaxKind::JS_REFERENCE_IDENTIFIER => JsReferenceIdentifier::cast_ref(node)?
-            .value_token()
-            .ok()?
-            .text_trimmed()
-            == MAP,
-        JsSyntaxKind::JS_IDENTIFIER_BINDING => JsIdentifierBinding::cast_ref(node)?
-            .name_token()
-            .ok()?
-            .text_trimmed()
-            == MAP,
+        JsSyntaxKind::JS_REFERENCE_IDENTIFIER => {
+            JsReferenceIdentifier::cast_ref(node)?
+                .value_token()
+                .ok()?
+                .text_trimmed()
+                == MAP
+        }
+        JsSyntaxKind::JS_IDENTIFIER_BINDING => {
+            JsIdentifierBinding::cast_ref(node)?
+                .name_token()
+                .ok()?
+                .text_trimmed()
+                == MAP
+        }
         JsSyntaxKind::JS_NAME => JsName::cast_ref(node)?.value_token().ok()?.text_trimmed() == MAP,
         _ => false,
     };
@@ -246,7 +251,15 @@ fn identifier_name(expr: &AnyJsExpression) -> Option<String> {
     let AnyJsExpression::JsIdentifierExpression(ident) = expr else {
         return None;
     };
-    Some(ident.name().ok()?.value_token().ok()?.text_trimmed().to_string())
+    Some(
+        ident
+            .name()
+            .ok()?
+            .value_token()
+            .ok()?
+            .text_trimmed()
+            .to_string(),
+    )
 }
 
 fn string_literal_text(expr: &AnyJsExpression) -> Option<String> {
