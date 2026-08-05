@@ -31,6 +31,48 @@ Parallel:   files.par_iter().map(|file| analyze(file)).collect()
 - No locking or synchronization needed
 - Clean separation of concerns
 
+### Directory-Walk Parallelization (Inside `discover_files()`)
+
+`discover_files()` itself is also parallelized, not just the analysis step after
+it. `walk()` (in `src/analyzer/mod.rs`) recurses into subdirectories concurrently
+on rayon's global thread pool instead of one blocking `read_dir` at a time:
+
+```rust
+fn walk(dir: &Path, root: &Path, pattern: &GlobSet) -> Discovery {
+    let mut discovery = Discovery::default();
+    // ...read_dir this directory, split entries into files vs. subdirs...
+
+    let merged = subdirs
+        .into_par_iter()
+        .map(|path| walk(&path, root, pattern))   // recurse into each subdir in parallel
+        .reduce(Discovery::default, |mut a, b| {  // merge results (files, counts, skips)
+            a.dirs_scanned += b.dirs_scanned;
+            a.files_considered += b.files_considered;
+            a.files.extend(b.files);
+            a.dirs_skipped.extend(b.dirs_skipped);
+            a
+        });
+
+    // ...fold `merged` into this directory's own discovery...
+    discovery
+}
+```
+
+**Why this matters:**
+- Each directory's `read_dir` + pattern-match pass is small on its own, but a
+  tree with hundreds of directories turns into hundreds of blocking syscalls if
+  walked one at a time
+- `into_par_iter().map(...).reduce(...)` fans the recursive calls out across
+  cores and merges each subtree's `Discovery` (files found, dirs scanned/skipped,
+  files considered) back into the parent — no shared mutable state, no locks
+- This runs **before** file analysis: discovery and analysis are two separate
+  parallel stages, not one combined pass
+
+**Where this lives:** `discover_files()` → `walk()` in `src/analyzer/mod.rs`.
+Ported into this copy from the `biome-live-setup` worktree after a diff
+comparison showed it was the one place the two worktrees' copies of
+`custom-biome-lint` had diverged; both are now byte-identical.
+
 ### Single-Pass Analysis
 
 Each file is analyzed **exactly once**, with all rules running over the same syntax tree:
