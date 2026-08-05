@@ -323,12 +323,24 @@ cargo fmt --all -- --check \
   && cargo audit \
   && cargo deny check \
   && cargo build --release \
-  && ./target/release/custom-biome-lint fixtures
+  && (
+    set +e
+    ./target/release/custom-biome-lint fixtures
+    code=$?
+    set -e
+    test "$code" -eq 1
+  )
 ```
 
-The last command exits 1 by design (the fixtures contain deliberate violations),
-so in a script either run it last or check for exactly `1`. `cargo audit` and
-`cargo deny` require the respective binaries installed locally (`cargo install
-cargo-audit cargo-deny`, or `brew install cargo-audit cargo-deny`) — CI installs
-them fresh on every run instead, so a missing local install only affects this
-sweep, not the pipeline.
+The fixtures command is expected to exit 1 (the fixtures contain deliberate
+violations), which would otherwise break the `&&` chain — `test "$code" -eq 1`
+converts that specific, expected status back into success so the whole
+sweep's own exit code reports whether anything is *actually* wrong. `code`
+rather than `status`, since `status` is a read-only special variable in zsh —
+assigning to it fails outright if this is pasted into a zsh shell, which is
+the default on macOS.
+
+`cargo audit` and `cargo deny` require the respective binaries installed
+locally (`cargo install cargo-audit cargo-deny`, or `brew install cargo-audit
+cargo-deny`) — CI installs them fresh on every run instead, so a missing local
+install only affects this sweep, not the pipeline.
