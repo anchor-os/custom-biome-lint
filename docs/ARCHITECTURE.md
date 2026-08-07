@@ -354,14 +354,17 @@ plain `.js` files and JSX is a superset of the syntax that plain JS files use.
 | `no_native_map.rs` (298 lines) | Immutable.js `Map` rule |
 | `no_arrow_function_create_selector.rs` (120 lines) | Memoization rule |
 | `reselect_arity_match.rs` (115 lines) | Arity rule |
-| `mod.rs` | Re-exports, `JS_EXTENSIONS`, `JS_PATTERN` constants |
+| `mod.rs` | Re-exports, `JS_EXTENSIONS` constant |
 
 The trait is `Send + Sync` so a future parallel implementation over files needs
 no trait change. `registry.rs::with_all_rules` is the single registration point
 — the one place to edit when adding a rule. `supported_extensions()` on the
 registry is the union across rules, and `default_pattern()` derives
 `src/**/*.{js,jsx}` from that union rather than hardcoding it, so registering a
-`.ts` rule automatically widens the default glob.
+`.ts` rule automatically widens the default glob. Note this is
+`RuleRegistry::default_pattern()`, not a method on `Rule` itself — the trait has
+no `default_pattern()`, since the CLI's default glob is a property of the whole
+registered rule set, not of any single rule.
 
 `no_native_map.rs` is by far the largest rule because it is the only stateful
 one: it must track how `immutable` entered the file (default import, named

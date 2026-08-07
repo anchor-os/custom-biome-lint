@@ -55,10 +55,13 @@ pub trait Rule: Send + Sync {
     fn name(&self) -> &'static str;                       // kebab-case
     fn description(&self) -> &'static str;                // one line
     fn supported_extensions(&self) -> &'static [&'static str]; // leading dots
-    fn default_pattern(&self) -> &'static str;            // glob
     fn check(&self, file: &FileContext) -> Vec<Violation>;
 }
 ```
+
+There is no `default_pattern()` on the trait. The CLI's default glob is derived
+by `RuleRegistry::default_pattern()` from the union of every registered rule's
+`supported_extensions()`.
 
 `name()` is load-bearing in three places at once: the rightmost column of CLI
 output, the identifier users write in `// biome-ignore-line <name>`, and the
@@ -173,7 +176,7 @@ use biome_rowan::AstNode;
 use crate::analyzer::runner::FileContext;
 use crate::diagnostics::Violation;
 use crate::rules::rule::Rule;
-use crate::rules::{JS_EXTENSIONS, JS_PATTERN};
+use crate::rules::JS_EXTENSIONS;
 
 // Message as a const, matching the other rules: it is asserted on in tests.
 const MESSAGE: &str =
@@ -194,10 +197,6 @@ impl Rule for NoAwaitInLoop {
 
     fn supported_extensions(&self) -> &'static [&'static str] {
         JS_EXTENSIONS // [".js", ".jsx"] — shared constant, do not inline
-    }
-
-    fn default_pattern(&self) -> &'static str {
-        JS_PATTERN // "src/**/*.{js,jsx}"
     }
 
     fn check(&self, file: &FileContext) -> Vec<Violation> {
@@ -524,8 +523,8 @@ about the limitations — see below.
 
 - Implement the `Rule` trait signature exactly; do not add methods or change
   arities.
-- Use the `JS_EXTENSIONS` and `JS_PATTERN` constants from `src/rules/mod.rs`
-  rather than inlining `[".js", ".jsx"]`.
+- Use the `JS_EXTENSIONS` constant from `src/rules/mod.rs` rather than inlining
+  `[".js", ".jsx"]`.
 - Reuse the centralised suppression logic — which means **not touching it**. The
   runner calls `Suppressions::is_suppressed` after your `check` returns.
 - `text_trimmed_range()`, never `text_range()`, for reported offsets.

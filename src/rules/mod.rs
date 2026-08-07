@@ -12,6 +12,3 @@ pub use rule::Rule;
 
 /// Extensions shared by all current rules.
 pub const JS_EXTENSIONS: &[&str] = &[".js", ".jsx"];
-
-/// Default glob shared by all current rules.
-pub const JS_PATTERN: &str = "src/**/*.{js,jsx}";
