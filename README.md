@@ -66,6 +66,7 @@ Quote globs so your shell does not expand them first.
 | --- | --- |
 | `--write-fix` | Add a suppression comment for every violation, in place |
 | `--dry-run` | With `--write-fix`, report the comments without writing |
+| `--format <text\|json>` | Diagnostics output format (default: `text`). Not supported with `--write-fix`. |
 | `-v`, `--verbose` | Config source, enabled/skipped rules, resolved pattern |
 | `-vv` | Brace expansion, walk root, discovery counts |
 | `-vvv` | Per-file: rules run, violation count, line count |
@@ -102,6 +103,47 @@ src/selectors/users.js
 
 ✖ 2 errors in 2 files
 ```
+
+### JSON output
+
+`--format json` prints a single stable JSON document to stdout instead — no
+other stdout content in that mode, so a consumer can parse it directly:
+
+```sh
+custom-biome-lint --format json > report.json
+```
+
+```json
+{
+  "version": 1,
+  "files": [
+    {
+      "path": "src/selectors/users.js",
+      "violations": [
+        {
+          "line": 12,
+          "col": 64,
+          "severity": "error",
+          "rule": "reselect-arity-match",
+          "message": "createSelector expects 1 parameter(s) in the result function, but found 2."
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "errors": 1,
+    "warnings": 0,
+    "filesWithViolations": 1,
+    "filesChecked": 9,
+    "elapsedMs": 7,
+    "clean": false
+  }
+}
+```
+
+The schema is additive-only across versions: existing fields never change
+meaning or disappear, so a consumer that reads only the fields it knows about
+keeps working after an upgrade.
 
 ## Configuration
 

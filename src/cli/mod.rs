@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
-pub use args::CliArgs;
+pub use args::{CliArgs, OutputFormat};
 pub use output::{Reporter, HELP};
 
 use crate::analyzer::{analyze_file, discover_files, resolve_pattern, GlobSet};
@@ -238,9 +238,13 @@ where
 
     let mut totals = tally(&reports, checked);
     totals.elapsed = start.elapsed();
-    reporter.print_report(&reports, &totals);
+    reporter.print_report(&reports, &totals, args.format);
 
-    if cache_saved {
+    // The cache-location notice goes to stdout, so it must not appear in
+    // --format json mode: that stream is a single machine-readable document,
+    // and appending a plain-text line after it would make the output invalid
+    // JSON for any consumer that doesn't stop reading after the first value.
+    if cache_saved && args.format == OutputFormat::Text {
         report_cache_location(&reporter, &cache, cwd);
     }
 
