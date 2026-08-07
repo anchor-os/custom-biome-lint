@@ -1,11 +1,11 @@
 use biome_js_syntax::{
     AnyJsBindingPattern, AnyJsExpression, AnyJsFunctionBody, JsArrowFunctionExpression,
-    JsInitializerClause, JsVariableDeclarator,
+    JsCallExpression, JsInitializerClause, JsVariableDeclarator,
 };
 use biome_rowan::AstNode;
 
 use crate::analyzer::runner::FileContext;
-use crate::diagnostics::Violation;
+use crate::diagnostics::{Fix, Violation};
 use crate::rules::rule::Rule;
 use crate::rules::JS_EXTENSIONS;
 
@@ -31,9 +31,9 @@ impl Rule for NoArrowFunctionCreateSelector {
             let Some(arrow) = JsArrowFunctionExpression::cast_ref(&node) else {
                 continue;
             };
-            if !is_bare_create_selector_body(&arrow) {
+            let Some(call) = bare_create_selector_body(&arrow) else {
                 continue;
-            }
+            };
             let Some(declarator) = enclosing_declarator(&arrow) else {
                 continue;
             };
@@ -44,40 +44,53 @@ impl Rule for NoArrowFunctionCreateSelector {
                 continue;
             }
 
-            let offset = usize::from(arrow.syntax().text_trimmed_range().start());
+            let range = arrow.syntax().text_trimmed_range();
+            let offset = usize::from(range.start());
             let (line, col) = file.line_col(offset);
-            violations.push(Violation::error(
-                self.name(),
-                line,
-                col,
-                format!(
-                    "Avoid wrapping createSelector in an arrow function for \"{name}\". \
-                     It breaks memoization (a new selector is created on every call). \
-                     Use createSelector directly, or rename to \"{}\".",
-                    factory_name(&name)
-                ),
-            ));
+            // Unwrapping the arrow is always the same mechanical edit: replace
+            // the whole `(...) => createSelector(...)` with just the call,
+            // keeping the call's own original formatting verbatim.
+            let fix = Fix {
+                start: offset,
+                end: usize::from(range.end()),
+                replacement: call.syntax().text_trimmed().to_string(),
+            };
+            violations.push(
+                Violation::error(
+                    self.name(),
+                    line,
+                    col,
+                    format!(
+                        "Avoid wrapping createSelector in an arrow function for \"{name}\". \
+                         It breaks memoization (a new selector is created on every call). \
+                         Use createSelector directly, or rename to \"{}\".",
+                        factory_name(&name)
+                    ),
+                )
+                .with_fix(fix),
+            );
         }
 
         violations
     }
 }
 
-/// True when the arrow's concise body is exactly `createSelector(...)`.
-fn is_bare_create_selector_body(arrow: &JsArrowFunctionExpression) -> bool {
-    let Ok(AnyJsFunctionBody::AnyJsExpression(expr)) = arrow.body() else {
-        return false;
+/// The arrow's concise body, if it is exactly `createSelector(...)`.
+fn bare_create_selector_body(arrow: &JsArrowFunctionExpression) -> Option<JsCallExpression> {
+    let AnyJsFunctionBody::AnyJsExpression(expr) = arrow.body().ok()? else {
+        return None;
     };
     let AnyJsExpression::JsCallExpression(call) = expr else {
-        return false;
+        return None;
     };
-    let Ok(AnyJsExpression::JsIdentifierExpression(ident)) = call.callee() else {
-        return false;
+    let AnyJsExpression::JsIdentifierExpression(ident) = call.callee().ok()? else {
+        return None;
     };
-    ident
+    let is_create_selector = ident
         .name()
         .and_then(|n| n.value_token())
-        .is_ok_and(|t| t.text_trimmed() == "createSelector")
+        .is_ok_and(|t| t.text_trimmed() == "createSelector");
+    is_create_selector.then_some(call)
 }
 
 /// The arrow must be the *initializer* of a declarator, matching the original

@@ -18,8 +18,12 @@ pub struct CliArgs {
     pub version: bool,
     /// Add suppression comments for every violation instead of reporting them.
     pub write_fix: bool,
-    /// With `write_fix`, report the comments that would be added without
-    /// touching any file.
+    /// Rewrite violations in place using each rule's own fix, instead of
+    /// reporting them. Only violations whose rule produced a [`crate::diagnostics::Fix`]
+    /// are touched; the rest are reported as skipped.
+    pub auto_fix: bool,
+    /// With `write_fix` or `auto_fix`, report the changes that would be made
+    /// without touching any file.
     pub dry_run: bool,
     /// Enable parallel file analysis using rayon (default: true).
     pub parallel: bool,
@@ -48,6 +52,7 @@ impl CliArgs {
                 "--debug" => parsed.debug = true,
                 "--trace" => parsed.trace = true,
                 "--write-fix" => parsed.write_fix = true,
+                "--auto-fix" => parsed.auto_fix = true,
                 "--dry-run" => parsed.dry_run = true,
                 "--parallel" => parsed.parallel = true,
                 "--no-parallel" => parsed.parallel = false,
@@ -91,11 +96,20 @@ impl CliArgs {
             }
         }
 
-        if parsed.dry_run && !parsed.write_fix {
-            return Err("--dry-run only applies to --write-fix".to_string());
+        if parsed.dry_run && !parsed.write_fix && !parsed.auto_fix {
+            return Err("--dry-run only applies to --write-fix or --auto-fix".to_string());
         }
         if parsed.write_fix && parsed.format == OutputFormat::Json {
             return Err("--format json is not supported together with --write-fix".to_string());
+        }
+        if parsed.auto_fix && parsed.format == OutputFormat::Json {
+            return Err("--format json is not supported together with --auto-fix".to_string());
+        }
+        if parsed.write_fix && parsed.auto_fix {
+            return Err(
+                "--write-fix and --auto-fix are two different fix mechanisms; run one, look at the result, then the other"
+                    .to_string(),
+            );
         }
 
         Ok(parsed)
@@ -178,6 +192,31 @@ mod tests {
     fn dry_run_requires_write_fix() {
         assert!(parse(&["--write-fix", "--dry-run"]).unwrap().dry_run);
         assert!(parse(&["--dry-run"]).is_err());
+    }
+
+    #[test]
+    fn auto_fix_defaults_to_writing() {
+        let args = parse(&["--auto-fix"]).unwrap();
+        assert!(args.auto_fix);
+        assert!(!args.dry_run);
+    }
+
+    #[test]
+    fn dry_run_also_applies_to_auto_fix() {
+        assert!(parse(&["--auto-fix", "--dry-run"]).unwrap().dry_run);
+    }
+
+    #[test]
+    fn write_fix_and_auto_fix_cannot_be_combined() {
+        assert!(parse(&["--write-fix", "--auto-fix"]).is_err());
+        assert!(parse(&["--auto-fix", "--write-fix"]).is_err());
+    }
+
+    #[test]
+    fn json_format_is_rejected_with_auto_fix() {
+        assert!(parse(&["--auto-fix", "--format", "json"]).is_err());
+        assert!(parse(&["--format", "json", "--auto-fix"]).is_err());
+        assert!(parse(&["--format", "text", "--auto-fix"]).is_ok());
     }
 
     #[test]

@@ -6,11 +6,11 @@ including reproducing one known false-positive class — so that turning this to
 on produces exactly the findings the old ESLint setup produced, no more and no
 less. That property is what makes the migration verifiable.
 
-| Rule | Guards against | Extensions |
-| --- | --- | --- |
-| [`no-native-map`](#no-native-map) | Native `Map` leaking into Immutable.js state | `.js`, `.jsx` |
-| [`no-arrow-function-create-selector`](#no-arrow-function-create-selector) | Broken Reselect memoization | `.js`, `.jsx` |
-| [`reselect-arity-match`](#reselect-arity-match) | Silently dropped selector inputs | `.js`, `.jsx` |
+| Rule | Guards against | Extensions | `--auto-fix` |
+| --- | --- | --- | --- |
+| [`no-native-map`](#no-native-map) | Native `Map` leaking into Immutable.js state | `.js`, `.jsx` | No — flags known false positives (below), so no rewrite is always safe |
+| [`no-arrow-function-create-selector`](#no-arrow-function-create-selector) | Broken Reselect memoization | `.js`, `.jsx` | Yes — unwraps the arrow |
+| [`reselect-arity-match`](#reselect-arity-match) | Silently dropped selector inputs | `.js`, `.jsx` | No — the fix would have to guess which side of the mismatch is wrong |
 
 ---
 

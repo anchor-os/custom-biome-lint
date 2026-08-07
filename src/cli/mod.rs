@@ -13,6 +13,7 @@ pub use args::{CliArgs, OutputFormat};
 pub use output::{Reporter, HELP};
 
 use crate::analyzer::{analyze_file, discover_files, resolve_pattern, GlobSet};
+use crate::autofix::Autofix;
 use crate::cache::{hash_content, CacheManager};
 use crate::config::{PackageConfig, RuleSeverity};
 use crate::diagnostics::{tally, FileReport, Severity, Violation};
@@ -93,9 +94,9 @@ where
         reporter.warn("every rule is disabled by ignoreBiomeExtensionRules; nothing to check");
         // --format json must always produce a document on stdout, even here:
         // returning immediately (as this used to) left a CI consumer parsing
-        // stdout as JSON with nothing to parse. --write-fix has no rules to
-        // fix either way, so it still returns early without a report.
-        if !args.write_fix {
+        // stdout as JSON with nothing to parse. --write-fix/--auto-fix have no
+        // rules to fix either way, so they still return early without a report.
+        if !args.write_fix && !args.auto_fix {
             let mut totals = tally(&[], 0);
             totals.elapsed = start.elapsed();
             reporter.print_report(&[], &totals, args.format);
@@ -201,7 +202,7 @@ where
         );
 
         if !analyzed.violations.is_empty() {
-            if args.write_fix {
+            if args.write_fix || args.auto_fix {
                 to_fix.insert(file.clone(), analyzed.violations.clone());
             }
             reports.push(FileReport::new(
@@ -238,6 +239,24 @@ where
         // A dry run leaves the violations in place, so it reports failure
         // whenever there is anything left to write.
         let clean = fixed.is_complete() && (fixed.wrote || fixed.changes.is_empty());
+        return if clean {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::from(EXIT_VIOLATIONS)
+        };
+    }
+
+    if args.auto_fix {
+        let fixed = Autofix::apply(&to_fix, !args.dry_run);
+        reporter.print_autofix_report(&fixed, cwd);
+
+        if cache_saved {
+            report_cache_location(&reporter, &cache, cwd);
+        }
+
+        // A dry run leaves the violations in place, so it reports failure
+        // whenever there is anything left to write.
+        let clean = fixed.is_complete() && (fixed.wrote || fixed.fixes_applied.is_empty());
         return if clean {
             ExitCode::SUCCESS
         } else {

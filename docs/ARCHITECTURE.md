@@ -225,6 +225,57 @@ path's extension, tolerating both `".js"` and `"js"` forms. Today all three
 rules declare `JS_EXTENSIONS` (`[".js", ".jsx"]`), but the mechanism is there so
 a future TypeScript-only or JSX-only rule needs no special casing.
 
+## Decision: autofix is rule-owned, not a generic AST diff
+
+`--auto-fix` (see `src/autofix.rs`) rewrites flagged code using a
+[`Fix`](../src/diagnostics/violation.rs) — a byte-range replacement — carried
+directly on the `Violation` that needs it:
+
+```rust
+pub struct Fix {
+    pub start: usize,
+    pub end: usize,
+    pub replacement: String,
+}
+```
+
+**Why the fix lives on the violation, not behind a second trait method.** An
+earlier design considered a `fn fix(&self, file: &FileContext, violation:
+&Violation) -> Option<Fix>` method on `Rule`, called in a second pass after
+`check()`. That requires matching a `Fix` back to the exact node that produced
+a given violation using only its line/col — fragile the moment a file has two
+violations on the same line, and it re-walks the tree a second time for
+information `check()` already had in hand. Instead, the same `check()` call
+that detects a violation computes its `Fix` right there, while it still holds
+the syntax node, and attaches it via `Violation::with_fix`. No second pass, no
+re-matching, and a rule that doesn't override anything (the default) simply
+never calls `with_fix` — `Violation::fix` stays `None`.
+
+**Why most rules don't have one.** A fix is only ever offered when it is
+unambiguous. `no-arrow-function-create-selector` qualifies: unwrapping `() =>
+createSelector(...)` to `createSelector(...)` is always correct, nothing to
+guess. `reselect-arity-match` and `no-native-map` do not: the former would have
+to guess which side of an arity mismatch is wrong, and the latter already has a
+known false-positive class (`mapboxgl.Map`, see RULES.md) that a fix could not
+tell apart from a real native `Map`. Guessing wrong in an autofix is worse than
+not fixing at all — it edits code the user didn't ask to have edited, silently.
+A violation with no `Fix` is reported as skipped, not attempted.
+
+**Why this is a different code path from `--write-fix`.** `fixer.rs`
+(`--write-fix`) adds a suppression comment *around* a violation without
+touching the flagged code; `autofix.rs` (`--auto-fix`) rewrites the flagged
+code itself. Conflating them into one flag would mean deciding, per violation,
+which of two different edits to make — instead the CLI rejects combining
+`--write-fix` and `--auto-fix` in one run and each is its own module with its
+own report type (`FixReport` vs `AutofixReport`), sharing only the
+re-parse-and-verify-before-writing safety check.
+
+**Overlap handling.** Two fixes on the same file are applied left to right by
+start offset; a fix whose range overlaps one already accepted is skipped for
+this run rather than applied on top of a stale offset, which would corrupt the
+file. This can only happen across rules today, since no single rule in this
+codebase produces more than one violation covering the same range.
+
 ## Decision: `ignoreBiomeExtensionRules` in `package.json`
 
 Rule severities are set by name from the nearest `package.json` at or above the
@@ -481,11 +532,35 @@ unreliable and the risk of corrupting it is real. Anything unplaceable is
 surfaced as an `Unfixable` warning and makes the run exit non-zero, so a violation
 never disappears silently.
 
+### `src/autofix.rs`
+
+Backs `--auto-fix`. See "Decision: autofix is rule-owned, not a generic AST
+diff" above for why the fix lives on the `Violation` rather than behind a
+second `Rule` method. `plan_file` (private; `Autofix::apply` is the IO
+wrapper) is pure for the same testability reason as `fixer::plan_file`:
+
+1. Split violations into those with a `Fix` and those without; the latter are
+   recorded as `SkippedFix { reason: "rule has no autofix for this
+   violation", .. }` immediately.
+2. Sort the fixable ones by `Fix::start` and apply them left to right,
+   splicing each `replacement` in for `source[start..end]`. A fix whose
+   `start` falls before the current write cursor overlaps one already
+   accepted and is skipped (`"overlaps another fix in this run"`) rather than
+   applied on top of a now-stale offset.
+3. Re-parse the rewritten source. If it no longer parses cleanly, none of this
+   file's fixes are written — every accepted fix for that file reverts to
+   skipped (`"applying the fix would leave the file unparseable"`) and the
+   original source is returned unchanged.
+
+Like `Fixer::apply_suppressions`, `Autofix::apply` reads and writes each file
+independently and records per-file IO errors in `AutofixReport::failures`
+rather than aborting the whole run.
+
 ### `src/diagnostics/`
 
 | File | Role |
 | --- | --- |
-| `violation.rs` | `Violation { line, col, rule, message, severity }`, `Severity` |
+| `violation.rs` | `Violation { line, col, rule, message, severity, fix }`, `Severity`, `Fix` |
 | `formatter.rs` | `FileReport`, `Totals`, `format_reports`, `tally` |
 
 `format_reports` produces ESLint's format — a path header, then `line:col

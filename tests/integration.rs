@@ -346,4 +346,70 @@ mod cli_behavior {
         assert_eq!(parsed["summary"]["clean"], true);
         assert_eq!(parsed["files"].as_array().unwrap().len(), 0);
     }
+
+    #[test]
+    fn auto_fix_unwraps_the_arrow_and_relinting_is_then_clean() {
+        let tmpdir = TempDir::new().unwrap();
+        fs::write(
+            tmpdir.path().join("sample.js"),
+            "const selectAll = () => createSelector(a, b);\n",
+        )
+        .unwrap();
+
+        let fix = Command::new(env!("CARGO_BIN_EXE_custom-biome-lint"))
+            .arg(".")
+            .arg("--auto-fix")
+            .arg("--no-cache")
+            .current_dir(tmpdir.path())
+            .output()
+            .expect("failed to run custom-biome-lint");
+        assert!(fix.status.success(), "{:?}", fix);
+
+        let rewritten = fs::read_to_string(tmpdir.path().join("sample.js")).unwrap();
+        assert_eq!(rewritten, "const selectAll = createSelector(a, b);\n");
+
+        let relint = Command::new(env!("CARGO_BIN_EXE_custom-biome-lint"))
+            .arg(".")
+            .arg("--no-cache")
+            .current_dir(tmpdir.path())
+            .output()
+            .expect("failed to run custom-biome-lint");
+        assert!(
+            relint.status.success(),
+            "fixed file must relint clean: {:?}",
+            relint
+        );
+    }
+
+    #[test]
+    fn auto_fix_dry_run_leaves_the_file_untouched() {
+        let tmpdir = TempDir::new().unwrap();
+        let source = "const selectAll = () => createSelector(a, b);\n";
+        fs::write(tmpdir.path().join("sample.js"), source).unwrap();
+
+        let output = Command::new(env!("CARGO_BIN_EXE_custom-biome-lint"))
+            .arg(".")
+            .arg("--auto-fix")
+            .arg("--dry-run")
+            .arg("--no-cache")
+            .current_dir(tmpdir.path())
+            .output()
+            .expect("failed to run custom-biome-lint");
+
+        assert!(!output.status.success(), "unfixed violations remain");
+        assert_eq!(
+            fs::read_to_string(tmpdir.path().join("sample.js")).unwrap(),
+            source
+        );
+    }
+
+    #[test]
+    fn write_fix_and_auto_fix_together_is_rejected() {
+        let output = Command::new(env!("CARGO_BIN_EXE_custom-biome-lint"))
+            .arg("--write-fix")
+            .arg("--auto-fix")
+            .output()
+            .expect("failed to run custom-biome-lint");
+        assert!(!output.status.success());
+    }
 }

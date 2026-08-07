@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::autofix::AutofixReport;
 use crate::cli::args::OutputFormat;
 use crate::diagnostics::{format_reports, format_reports_json, FileReport, Totals};
 use crate::fixer::FixReport;
@@ -18,10 +19,15 @@ ARGS:
 
 FLAGS:
         --write-fix    Add a suppression comment for every violation, in place
-        --dry-run      With --write-fix, report the comments without writing
+        --auto-fix     Rewrite violations in place using each rule's own fix.
+                       Only rules that can produce an unambiguous fix support
+                       this; the rest are reported as skipped. Cannot be
+                       combined with --write-fix.
+        --dry-run      With --write-fix or --auto-fix, report the changes
+                       without writing them
         --format <text|json>
                        Diagnostics output format (default: text). Not
-                       supported together with --write-fix.
+                       supported together with --write-fix or --auto-fix.
     -v, --verbose      Standard verbosity (shows rules, skips)
     -vv                Deep verbosity (file discovery, rule execution)
     -vvv               Super verbose (per-file AST details)
@@ -29,6 +35,14 @@ FLAGS:
         --trace        Prefix log lines with their source location
     -h, --help         Show this help
     -V, --version      Show version
+
+AUTOFIX:
+    --auto-fix currently applies to:
+        no-arrow-function-create-selector  unwraps the arrow, keeping the
+                                            createSelector call as-is
+
+    Every other rule has no unambiguous fix and is left for --write-fix or
+    manual editing instead.
 
 CONFIGURATION:
     package.json may set rule severities by name:
@@ -49,8 +63,9 @@ SUPPRESSIONS:
     --write-fix emits there.
 
 EXIT CODES:
-    0    no violations (with --write-fix: everything was suppressed)
-    1    violations found, or a violation could not be suppressed
+    0    no violations (with --write-fix: everything was suppressed;
+         with --auto-fix: everything was fixed)
+    1    violations found, or a violation could not be suppressed/fixed
     2    bad usage or unreadable path
 ";
 
@@ -161,6 +176,54 @@ impl Reporter {
         }
 
         if !report.wrote && report.suppressions_added > 0 {
+            println!("Dry run: nothing was written. Re-run without --dry-run to apply.");
+        }
+    }
+
+    /// Prints what `--auto-fix` changed, or would change in a dry run.
+    pub fn print_autofix_report(&self, report: &AutofixReport, cwd: &Path) {
+        let mut current: Option<&Path> = None;
+        for fix in &report.fixes_applied {
+            let path = fix.path.as_path();
+            if current != Some(path) {
+                if current.is_some() {
+                    println!();
+                }
+                println!("{}", relative(path, cwd).display());
+                current = Some(path);
+            }
+            println!("  {:>5}  [{}] -> {}", fix.line, fix.rule, fix.replacement);
+        }
+
+        if !report.fixes_applied.is_empty() {
+            println!();
+        }
+
+        let verb = if report.wrote {
+            "fixed"
+        } else {
+            "would be fixed"
+        };
+        println!(
+            "{} violation(s) {verb} in {} file(s).",
+            report.fixes_applied.len(),
+            report.files_modified
+        );
+
+        for item in &report.skipped {
+            self.warn(&format!(
+                "{}:{}: left unfixed ({}): {}",
+                relative(&item.path, cwd).display(),
+                item.line,
+                item.reason,
+                item.rule
+            ));
+        }
+        for (path, error) in &report.failures {
+            self.error(&format!("{}: {error}", relative(path, cwd).display()));
+        }
+
+        if !report.wrote && !report.fixes_applied.is_empty() {
             println!("Dry run: nothing was written. Re-run without --dry-run to apply.");
         }
     }

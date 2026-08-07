@@ -17,20 +17,20 @@ Plus a one-off portability check documented at the end.
 cargo test
 ```
 
-Expected: **62 passing, 0 failing**, in four suites.
+Expected: **108 passing, 0 failing**, in four suites.
 
 ```
 Running unittests src/lib.rs
-running 38 tests
-test result: ok. 38 passed
+running 76 tests
+test result: ok. 76 passed
 
 Running unittests src/bin/custom-biome-lint.rs
 running 0 tests
 test result: ok. 0 passed
 
 Running tests/integration.rs
-running 23 tests
-test result: ok. 23 passed
+running 31 tests
+test result: ok. 31 passed
 
 Doc-tests custom_biome_lint
 running 1 test
@@ -41,14 +41,18 @@ The binary suite reporting 0 tests is expected — `src/bin/custom-biome-lint.rs
 7 lines that delegate to `cli::run()`, so everything is tested through the
 library.
 
-### Unit tests (38, in `src/`)
+### Unit tests (76, in `src/`)
 
 Colocated `#[cfg(test)]` modules testing components in isolation.
 
 | Module | Count | What it covers |
 | --- | --- | --- |
-| `analyzer::file_matcher` | 6 | Glob semantics: `*` staying within a segment, `**` spanning directories, `?`, brace expansion, extension collection from alternatives, `root_dir()` stopping at the first wildcard |
-| `cli::args` | 8 | Quiet defaults, repeated `-v`, verbosity saturating at 3, clustered short flags (`-vd`), positional pattern, rejection of unknown flags and duplicate positionals, `--write-fix` defaulting to writing, `--dry-run` requiring `--write-fix` |
+| `analyzer::file_matcher` | 8 | Glob semantics: `*` staying within a segment, `**` spanning directories, `?`, brace expansion, extension collection from alternatives, `root_dir()` stopping at the first wildcard |
+| `autofix` | 5 | A single fix applied, a violation with no `Fix` left as skipped rather than dropped, overlapping fixes only applying the first, a fix that would break parsing rejected before writing, dry run vs write behaviour |
+| `cache` | 9 | Content-hash cache creation, marking/saving, content changes invalidating regardless of mtime, identical content staying valid after a rewrite, cache-key (rule set + version) changes invalidating, disk round-trip, corrupted-cache recovery, old mtime-format entries silently ignored |
+| `cli::args` | 20 | Quiet defaults, repeated `-v`, verbosity saturating at 3, clustered short flags (`-vd`), positional pattern, rejection of unknown flags and duplicate positionals, `--write-fix`/`--auto-fix` defaulting to writing, `--dry-run` requiring one of them, `--write-fix` and `--auto-fix` rejected together, `--format` parsing and its rejection alongside `--write-fix`/`--auto-fix` |
+| `config::package_config` | 7 | Missing `package.json`, legacy array form, object form with `off`/`warn`/`error`, malformed entries warning and being skipped |
+| `diagnostics::formatter` | 3 | JSON output carries every field, omits clean files, is stable for a clean run |
 | `suppress` | 10 | Same-line and next-line markers, multiple comma-separated rules, `--` justification suffix, block-comment and JSX brace forms, marker inside a string literal being ignored, bare marker suppressing every rule, `append_at` placement for merges |
 | `fixer` | 14 | Trailing vs own-line placement, indentation, several rules sharing one comment, extending an existing comment, justification surviving a merge, JSX brace form on its own line, JSX attributes treated as code, template-literal and parse-error refusals, CRLF and missing-final-newline round-trips, idempotency, the lexer's multi-line and regex-resync behaviour |
 
@@ -59,20 +63,23 @@ cargo test --lib suppress
 cargo test --lib file_matcher
 ```
 
-### Integration tests (23, in `tests/integration.rs`)
+### Integration tests (31, in `tests/integration.rs`)
 
 These drive the public API — mostly `lint_source`, which runs the full
-parse → check → suppression-filter pipeline, the same path the CLI uses.
+parse → check → suppression-filter pipeline, the same path the CLI uses. The
+`cli_behavior` module instead runs the built binary as a subprocess, for
+behaviour that only exists at the `cli::run()` layer.
 
 | Module | Count | What it covers |
 | --- | --- | --- |
-| `no_native_map` | 6 | Native `Map` reported; Immutable named import, namespace-plus-destructure, and `require` alias all allowed; `Map` from an unrelated module still reported; suppressions work |
-| `reselect_arity_match` | 4 | Mismatched arity reported, matching arity allowed, member-expression callee (`reselect.createSelector`) checked, suppressions work |
-| `no_arrow_function_create_selector` | 3 | Wrapped `createSelector` reported, direct call and `make*` factory allowed, suppressions work |
+| `no_native_map` | 7 | Native `Map` reported; Immutable named import, namespace-plus-destructure, and `require` alias all allowed; `Map` from an unrelated module still reported; suppressions work; edge cases produce exactly the documented violations |
+| `reselect_arity_match` | 5 | Mismatched arity reported, matching arity allowed, member-expression callee (`reselect.createSelector`) checked, suppressions work, edge cases flag only the namespaced mismatch |
+| `no_arrow_function_create_selector` | 4 | Wrapped `createSelector` reported, direct call and `make*` factory allowed, suppressions work, edge cases flag only the non-factory `make`-prefixed name |
 | `patterns` | 4 | Bare directory expands to a brace glob, bare directory discovers every fixture, explicit glob passed through unchanged, `node_modules` never walked |
-| `config` | 2 | `ignoreBiomeExtensionRules` filters rules out; missing `package.json` enables everything |
+| `cli_behavior` | 4 | `--format json` still emits a document when every rule is disabled; `--auto-fix` unwraps the arrow and relints clean; `--auto-fix --dry-run` leaves the file untouched; `--write-fix` and `--auto-fix` together is rejected |
+| `config` | 3 | `ignoreBiomeExtensionRules` filters rules out; missing `package.json` enables everything; `warn` severity reports without disabling |
 | `extensions` | 1 | An unsupported extension yields no violations |
-| top level | 3 | Registry exposes all three rules; default pattern covers `.js` and `.jsx`; every rule has all three fixture files |
+| top level | 3 | Registry exposes all three rules; default pattern covers `.js` and `.jsx`; every rule has fixtures for all four cases |
 
 The four `patterns` tests are regressions for a real bug: the bare-directory
 shorthand was producing `fixtures/**/*.js,jsx` instead of
@@ -80,8 +87,9 @@ shorthand was producing `fixtures/**/*.js,jsx` instead of
 That silently matched **nothing**, so the tool reported a clean run — the worst
 failure mode for a linter. Do not delete these tests.
 
-`every_rule_has_fixtures_for_all_three_cases` is a guard that fails if a new rule
-is registered without `valid.js`, `invalid.js` and `suppressed.js`.
+`every_rule_has_fixtures_for_all_four_cases` is a guard that fails if a new rule
+is registered without `valid.js`, `invalid.js`, `suppressed.js` and
+`edge-cases.js`.
 
 ### Doctest (1)
 
