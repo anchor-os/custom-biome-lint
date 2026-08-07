@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `custom-biome-lint` tool implements **incremental caching** to skip re-analyzing unchanged files on subsequent runs. This provides **56-63x speedup** on warm runs compared to the baseline.
+The `custom-biome-lint` tool implements **incremental caching** to skip re-analyzing unchanged files on subsequent runs. See `docs/BENCHMARKING.md` for current, re-runnable speedup numbers rather than a hardcoded figure here.
 
 **Enabled by default.** Disable with `--no-cache` if needed.
 
@@ -21,65 +21,82 @@ Each cached file stores two pieces of data:
 
 | Key | Value | Purpose |
 |-----|-------|---------|
-| `mtime` | Unix timestamp (seconds) | Detect file changes |
-| `rule_hash` | String hash of rule names | Detect rule changes |
+| `content_hash` | Hash of the file's own bytes | Detect file changes |
+| `cache_key` | Hash of enabled rule names + tool version | Detect rule/version changes |
+
+**Not mtime.** An earlier version of this cache used file mtime instead of a
+content hash. That looks free — no need to read the file to check it — but a
+fresh checkout (the common case in CI) gives every file a new mtime
+regardless of whether its content changed, which defeats the cache on
+exactly the runs where it matters most. Content hashing costs reading every
+candidate file every run, but that read was already happening for any file
+the tool needed to actually check; what the cache skips is the *parse and
+rule execution* that follows, which is where ~70% of run time goes (see
+docs/ARCHITECTURE.md), not the read itself.
 
 ### Invalidation
 
 Cache is **automatically invalidated** when:
 
-1. **File is modified** (mtime changes)
+1. **File content changes** (content hash changes)
    ```
-   Cached mtime: 1785534929
-   Current mtime: 1785534930 (older file has 1785534929)
+   Cached content_hash: 8e89937c181c706d
+   Current content_hash: a41f02cd99b13e02
    → Cache invalid, re-analyze
    ```
+   A file rewritten with byte-for-byte identical content — e.g. a fresh git
+   checkout, which bumps mtime but not content — keeps the same hash and
+   **stays cached.** This is the exact case mtime-based caching got wrong.
 
-2. **Rules change** (rule_hash changes)
+2. **Rules or tool version change** (cache_key changes)
    ```
-   Cached rule_hash: "3" (3 rules enabled)
-   Current rule_hash: "4" (4 rules enabled, or different rules)
+   Cached cache_key: 8e89937c181c706d (3 rules enabled, tool v0.1.0)
+   Current cache_key: 3f1a9c0b2e77d451 (4 rules enabled, or a rule's logic
+                                          changed under a new tool version)
    → Cache invalid, re-analyze all files
    ```
+   The tool's own version is folded into this key because a rule's detection
+   logic — or the set of enabled rules — can change what a given file's
+   content produces, even though the file itself never changed.
 
 ## Cache Structure
 
 ### Location
 
 ```
-node_modules/.custom-biome-lint-cache/
+.custom-biome-lint-cache/
 └── cache.json
 ```
 
-**Why `node_modules/.custom-biome-lint-cache/`?**
-- Colocated with JS project files
-- `.gitignore` typically excludes `node_modules/`
-- Auto-cleared by `npm ci` / `yarn install` (ephemeral)
-- Doesn't pollute repo root
+At the project root, **not** under `node_modules/`: this tool has no npm
+dependencies of its own, so nesting its cache under `node_modules/` implied a
+dependency relationship that doesn't exist. `.gitignore` excludes it.
 
 ### Format
 
 ```json
 {
-  "version": "1",
+  "version": "2",
   "entries": {
     "/path/to/file.js": {
-      "mtime": 1785534929,
-      "rule_hash": "3"
+      "content_hash": "8e89937c181c706d",
+      "cache_key": "3f1a9c0b2e77d451"
     },
     "/path/to/other.jsx": {
-      "mtime": 1785534930,
-      "rule_hash": "3"
+      "content_hash": "a41f02cd99b13e02",
+      "cache_key": "3f1a9c0b2e77d451"
     }
   }
 }
 ```
 
 **Schema:**
-- `version`: Format version (allows breaking changes in future)
+- `version`: Format version (`"2"` — bumped from `"1"` when the cache moved
+  from mtime to content hashing; the two are not compatible, so an old
+  `cache.json` is simply ignored on load rather than misread)
 - `entries`: Map of file path → cache metadata
-- `mtime`: File modification time (seconds since Unix epoch)
-- `rule_hash`: Hash of enabled rule names
+- `content_hash`: Hash of the file's content at the time it was last found clean
+- `cache_key`: Hash of enabled rule names + tool version
 
 ## Implementation
 
@@ -93,14 +110,20 @@ pub struct CacheManager {
     cache_data: HashMap<String, CacheEntry>,
 }
 
+/// Hashes file content for cache-key purposes; not cryptographic.
+pub fn hash_content(source: &str) -> String
+
 impl CacheManager {
     pub fn new(cwd: &Path) -> Result<Self, String>
     pub fn load(&mut self) -> Result<(), String>
-    pub fn is_valid(&self, path: &Path, rule_hash: &str) -> bool
-    pub fn mark_valid(&mut self, path: &Path, rule_hash: &str) -> Result<(), String>
+    pub fn is_valid(&self, path: &Path, content_hash: &str, cache_key: &str) -> bool
+    pub fn mark_valid(&mut self, path: &Path, content_hash: &str, cache_key: &str)
     pub fn save(&self) -> Result<(), String>
 }
 ```
+
+`mark_valid` no longer returns `Result`: computing a content hash from a
+string already in memory can't fail the way reading file metadata could.
 
 ### Analysis Flow
 
@@ -108,13 +131,15 @@ impl CacheManager {
 1. Initialize cache
    ├─ Create CacheManager
    ├─ Load existing cache.json (if present)
-   └─ Compute current rule_hash
+   └─ Compute cache_key (compute_cache_key in cli::mod, from enabled rules + tool version)
 
 2. Analyze files
    ├─ For each file:
-   │  ├─ Check is_valid(file, rule_hash)
-   │  ├─ If cached: skip analysis
-   │  └─ If not cached: analyze, mark_valid()
+   │  ├─ Read its content (there is no cheaper check available -- see above)
+   │  ├─ Hash the content
+   │  ├─ Check is_valid(file, content_hash, cache_key)
+   │  ├─ If cached: skip parsing and rule execution
+   │  └─ If not cached: analyze; mark_valid() later if the result is clean
    └─ Collect violations
 
 3. Save cache
@@ -123,44 +148,45 @@ impl CacheManager {
    └─ (Errors are non-fatal)
 ```
 
-### Rule Hash Computation
+### Cache Key Computation
 
-Currently: **simple name concatenation**
+`compute_cache_key` (in `src/cli/mod.rs`) hashes the sorted, joined enabled
+rule names together with the tool's own `CARGO_PKG_VERSION`, using
+`std::collections::hash_map::DefaultHasher`:
 
 ```rust
-fn compute_rule_hash(rules: &[&dyn Rule]) -> String {
-    let rule_names = rules.iter()
-        .map(|r| r.name())
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("{:x}", rule_names.len())
+fn compute_cache_key(rules: &[&dyn Rule]) -> String {
+    let mut rule_names: Vec<&str> = rules.iter().map(|r| r.name()).collect();
+    rule_names.sort_unstable();
+
+    let mut hasher = DefaultHasher::new();
+    rule_names.join(",").hash(&mut hasher);
+    VERSION.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
 }
 ```
 
-**Example:**
-```
-Rules: ["no-native-map", "no-arrow-function-create-selector", "reselect-arity-match"]
-Hash: "63" (length of concatenated names, hex-encoded)
-
-If one rule disabled:
-Rules: ["no-native-map", "reselect-arity-match"]
-Hash: "42" (length changes → cache invalidates)
-```
+Sorting makes the hash independent of registration order. Joining with a
+separator (rather than plain concatenation) means `["ab", "c"]` and `["a",
+"bc"]` can't collide. This replaced an earlier version that hashed
+`rule_names.len()` — the length of the concatenated names — which is a real
+collision hazard (two different rule sets of equal total name length were
+indistinguishable) rather than a simplification; see the git history for
+that fix.
 
 ## Performance
 
 ### Measured Results
 
-```
-Warm run (all cached):         ~7-9ms
-Cold run (first run):          ~500ms
-Speedup:                        56-63x
-
-Cache overhead:                ~2-3ms
-  - Load cache from disk:      ~0.5ms
-  - Validate mtimes:           ~1-2ms
-  - Save cache to disk:        ~0.5ms
-```
+See `docs/BENCHMARKING.md` for a re-runnable harness and current numbers —
+this section previously hardcoded a one-off measurement from the mtime-based
+cache, which is exactly the kind of number that silently rots. The
+qualitative trade-off from switching to content hashing: warm runs no longer
+skip *reading* an unchanged file (mtime-based caching could), but they still
+skip the parse and rule execution that follows, which is the dominant cost
+(see docs/ARCHITECTURE.md's ~70%-parsing measurement) — so the cache's actual
+purpose is intact even though its cheapest possible case got slightly more
+expensive.
 
 ### When Cache Helps Most
 
@@ -213,64 +239,78 @@ custom-biome-lint src -v
 #[test]
 fn cache_marks_and_saves_files()
 #[test]
-fn cache_detects_mtime_changes()
+fn cache_detects_content_changes_even_with_an_unchanged_mtime()
+#[test]
+fn identical_content_stays_valid_even_if_rewritten()
 #[test]
 fn cache_detects_rule_hash_changes()
 #[test]
 fn cache_loads_from_disk()
 #[test]
 fn corrupted_cache_is_recovered()
+#[test]
+fn old_mtime_format_cache_is_silently_ignored_not_misread()
 ```
 
 **All tests pass.** Cache is:
 - ✓ Persistent (survives session restarts)
-- ✓ Invalidated correctly (mtime and rule hash changes)
-- ✓ Recoverable (corrupted cache doesn't crash)
+- ✓ Invalidated correctly on content or cache-key changes
+- ✓ **Not** falsely invalidated by a fresh checkout that only bumps mtime
+- ✓ Recoverable (corrupted cache, or an old mtime-format cache, don't crash
+  or get misread)
 
 ### Integration Testing
 
 ```bash
 # Test 1: Cold run (cache cleared)
-rm -rf node_modules/.custom-biome-lint-cache
+rm -rf .custom-biome-lint-cache
 time custom-biome-lint src --no-parallel
-# Expected: ~0.5s (baseline)
 
 # Test 2: Warm run (cached)
 time custom-biome-lint src --no-parallel
-# Expected: ~0.01s (56x faster)
+# Expected: dramatically faster -- see docs/BENCHMARKING.md for current numbers
 
-# Test 3: Change one file
+# Test 3: Change one file's content
 echo "changed" >> src/somefile.js
 time custom-biome-lint src --no-parallel
-# Expected: ~0.05s (analyze 1 file, skip rest)
+# Expected: only that file's rules re-run
 
-# Test 4: Modify rule
-# (Would require code change to rules)
-# Expected: re-analyze all files (rule_hash changed)
+# Test 4: Touch a file without changing its content (simulates a checkout)
+touch src/somefile.js
+time custom-biome-lint src --no-parallel
+# Expected: still a cache hit -- this is the case mtime-based caching got wrong
 
-# Test 5: Disable cache
+# Test 5: Modify a rule or bump the tool version
+# Expected: re-analyze all files (cache_key changed)
+
+# Test 6: Disable cache
 time custom-biome-lint src --no-cache
-# Expected: ~0.5s (same as cold run)
+# Expected: same as a cold run
 ```
 
 ## Design Decisions
 
-### Why mtime + rule_hash?
+### Why content hash, not mtime + rule_hash?
 
 **Alternatives considered:**
 
 | Approach | Pros | Cons |
 |----------|------|------|
-| **mtime + rule_hash** (chosen) | Fast, simple, catches all cases | Assumes filesystems report mtime accurately |
-| **File content hash (SHA256)** | Catches byte-for-byte changes | Slow (must hash all files) |
-| **Git commit hash** | Works with git workflows | Fails outside git repos |
-| **Timestamps + checksums** | Very robust | Overcomplicated |
+| **mtime + rule_hash** (original) | No need to read the file to check it | A fresh checkout bumps every file's mtime regardless of content, defeating the cache on exactly the runs (CI) where it matters most |
+| **Content hash + cache_key** (current) | Correct across checkouts; only reads what was going to be read anyway | Can't skip the file read itself, only the parse + rule execution after it |
+| **Git commit hash** | Works with git workflows | Fails outside git repos; this tool is deliberately usable standalone (e.g. against `fixtures/`) |
+| **Timestamps + checksums** | Very robust | Overcomplicated for what this cache needs |
 
-**We chose mtime + rule_hash because:**
-- mtime is instant (filesystem metadata)
-- rule_hash is trivial (string concatenation)
-- Covers 99% of real-world cases
-- Edge case: manually setting mtime is rare
+**We chose content hash + cache_key because:**
+- The dominant cost this cache exists to avoid is parsing and rule
+  execution (~70% of run time, see docs/ARCHITECTURE.md), not the file
+  read — so trading away the "skip the read too" property of mtime-based
+  caching for correctness across checkouts is the right trade
+- `DefaultHasher` (already used elsewhere in this codebase) needs no new
+  dependency and is fast enough for content already in memory
+- Folding the tool's own version into the cache key means an upgrade that
+  changes rule behavior can't be served stale results from before the
+  upgrade
 
 ### Why JSON (not SQLite/TOML/YAML)?
 
@@ -298,18 +338,20 @@ Question: Why not cache even files with violations?
 
 **Real impact:** Files with violations change less frequently than files with zero violations in typical codebases (most files are "clean").
 
-### Why `node_modules/.custom-biome-lint-cache/`?
+### Why `.custom-biome-lint-cache/` at the project root?
 
 **Alternatives:**
-- `.custom-biome-lint-cache/` (repo root)
+- `node_modules/.custom-biome-lint-cache/` (original choice)
 - `~/.cache/custom-biome-lint/` (home directory)
 - Project-relative `.biome-cache/`
 
-**We chose `node_modules/.custom-biome-lint-cache/` because:**
-- ✓ Auto-cleared by `npm ci` / `yarn install` (ephemeral, as it should be)
-- ✓ Colocated with project dependencies
-- ✓ `.gitignore` already excludes it
-- ✓ Clear intent: tool-specific cache, not user-global
+**We moved away from `node_modules/` because:**
+- ✗ This tool has no npm dependencies of its own, so nesting its cache
+  under `node_modules/` implied a dependency relationship that doesn't exist
+- ✓ A plain `.custom-biome-lint-cache/` at the project root is still
+  gitignored, still ephemeral, and doesn't need `node_modules/` to exist at
+  all — this tool is deliberately usable in a plain Rust checkout with no
+  npm involved (e.g. running it against `fixtures/`)
 
 ## Error Handling
 
@@ -326,14 +368,20 @@ Response:
 
 **Result:** Corrupted cache is **non-fatal**. The tool recovers and rebuilds cache.
 
+An old, pre-content-hash cache.json (with `mtime`/`rule_hash` fields instead
+of `content_hash`/`cache_key`) is handled the same way as a missing cache:
+`load()` skips any entry missing the fields it expects, so every file simply
+misses the cache once and gets re-cached in the new format — no corruption,
+no crash, no explicit migration step needed.
+
 ### Missing Cache Directory
 
 ```
-Scenario: node_modules/ doesn't exist yet
+Scenario: .custom-biome-lint-cache/ doesn't exist yet
 Response:
   1. CacheManager::new() succeeds (returns empty cache)
-  2. analyze() skips all cached files (none exist)
-  3. After analysis, save() creates node_modules/
+  2. analyze() finds nothing cached (no entries loaded)
+  3. After analysis, save() creates .custom-biome-lint-cache/
 ```
 
 **Result:** Cache initializes lazily on first analysis.
@@ -341,7 +389,7 @@ Response:
 ### Permission Denied
 
 ```
-Scenario: Can't write to node_modules/.custom-biome-lint-cache/
+Scenario: Can't write to .custom-biome-lint-cache/
 Response:
   1. Log warning (non-fatal)
   2. Continue without persisting cache
@@ -389,7 +437,7 @@ Rule A change → re-analyze only files cached for rules that changed
 
 Users can always clear cache:
 ```bash
-rm -rf node_modules/.custom-biome-lint-cache
+rm -rf .custom-biome-lint-cache
 ```
 
 Or disable it:
@@ -401,12 +449,12 @@ custom-biome-lint src --no-cache
 
 1. **Check cache exists:**
    ```bash
-   ls -la node_modules/.custom-biome-lint-cache/cache.json
+   ls -la .custom-biome-lint-cache/cache.json
    ```
 
 2. **Inspect cache content:**
    ```bash
-   cat node_modules/.custom-biome-lint-cache/cache.json | jq
+   cat .custom-biome-lint-cache/cache.json | jq
    ```
 
 3. **Force re-analysis:**

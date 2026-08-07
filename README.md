@@ -32,6 +32,8 @@ including one known false-positive class, are in [docs/RULES.md](docs/RULES.md).
 | [docs/TESTING.md](docs/TESTING.md) | Test suites, clippy, fixture and real-tree runs, portability check |
 | [docs/CI_CD_INTEGRATION.md](docs/CI_CD_INTEGRATION.md) | Husky and GitLab CI wiring (not yet applied) |
 | [docs/MIGRATION_NOTES.md](docs/MIGRATION_NOTES.md) | The 8 suppression comments still to translate |
+| [docs/INCREMENTAL_CACHING_DOCUMENT.md](docs/INCREMENTAL_CACHING_DOCUMENT.md) | How the content-hash cache works, and why it replaced mtime |
+| [docs/BENCHMARKING.md](docs/BENCHMARKING.md) | Re-runnable performance harness (`scripts/benchmark.sh`) and current numbers |
 
 ## Build
 
@@ -299,7 +301,8 @@ src/
   diagnostics/               Violation type and ESLint-style formatter
 fixtures/<rule_name>/        valid.js, invalid.js, suppressed.js, edge-cases.js per rule
 tests/integration.rs         end-to-end rule, config and pattern tests
-docs/                        architecture, rules, testing, setup, CI, migration
+scripts/benchmark.sh         re-runnable cold/warm/rayon/rule-cost benchmark
+docs/                        architecture, rules, testing, setup, CI, migration, caching, benchmarking
 .github/workflows/ci.yml                  build, test, fmt, clippy, audit, deny
 .github/workflows/biome-upgrade-check.yml monthly + on-demand: can we bump Biome yet?
 rustfmt.toml                  formatting config (cargo fmt)
