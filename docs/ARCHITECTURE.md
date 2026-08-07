@@ -89,7 +89,13 @@ know `analyze_file` exists. That is a real readability cost, accepted knowingly.
 
 ### What it buys
 
-**Measured**, running against the dashboard's `src/` (4393 files, warm cache):
+**Measured** at the time, running against the dashboard's `src/` (4393 files,
+warm cache) — a private tree not available in this repo, so treat this as a
+historical data point rather than something you can reproduce directly.
+`scripts/benchmark.sh` (see [BENCHMARKING.md](BENCHMARKING.md)) is a
+re-runnable version of the same "N rules vs. wall time" methodology against a
+self-contained synthetic corpus, and confirms the same qualitative finding —
+parsing dominates rule-walk cost — with current, reproducible numbers:
 
 | Rules enabled | Wall time |
 | --- | --- |

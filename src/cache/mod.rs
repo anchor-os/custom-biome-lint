@@ -1,10 +1,21 @@
 use serde_json::{json, Value};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
-/// Incremental cache manager using file mtime and rule hash.
+/// Incremental cache manager keyed on file content hash, not mtime.
+///
+/// mtime-based invalidation looks free (no need to read the file to check
+/// it), but a fresh checkout — the common case in CI — gives every file a
+/// new mtime regardless of whether its content changed, which would defeat
+/// the cache on exactly the runs where it matters most. Content hashing
+/// costs a full read of every candidate file every run, but that read was
+/// already happening for any file whose cache the tool needed to actually
+/// check; the win this cache exists for is skipping the *parse and rule
+/// execution* that follows, which is where ~70% of run time goes (see
+/// docs/ARCHITECTURE.md), not skipping the read itself.
 pub struct CacheManager {
     cache_dir: PathBuf,
     cache_data: HashMap<String, CacheEntry>,
@@ -12,10 +23,22 @@ pub struct CacheManager {
 
 #[derive(Debug, Clone)]
 struct CacheEntry {
-    /// File modification time (serialized as timestamp)
-    mtime: u64,
-    /// Hash of enabled rules (detects rule changes)
-    rule_hash: String,
+    /// Hash of the file's content at the time it was last found clean.
+    content_hash: String,
+    /// Hash of the enabled rule set and tool version (see
+    /// [`compute_cache_key`] in `cli::mod`) — invalidates every cached file
+    /// at once when either changes.
+    cache_key: String,
+}
+
+/// Hashes file content for cache-key purposes only. Not cryptographic: it
+/// only needs a low collision rate for this tool's own cache, computed over
+/// content already held in memory (the file was read to be linted either
+/// way), not a separate pass over the filesystem.
+pub fn hash_content(source: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    source.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
 }
 
 impl CacheManager {
@@ -43,15 +66,15 @@ impl CacheManager {
                     Ok(json) => {
                         if let Some(entries) = json.get("entries").and_then(|v| v.as_object()) {
                             for (path, entry) in entries {
-                                if let (Some(mtime), Some(rule_hash)) = (
-                                    entry.get("mtime").and_then(|v| v.as_u64()),
-                                    entry.get("rule_hash").and_then(|v| v.as_str()),
+                                if let (Some(content_hash), Some(cache_key)) = (
+                                    entry.get("content_hash").and_then(|v| v.as_str()),
+                                    entry.get("cache_key").and_then(|v| v.as_str()),
                                 ) {
                                     self.cache_data.insert(
                                         path.clone(),
                                         CacheEntry {
-                                            mtime,
-                                            rule_hash: rule_hash.to_string(),
+                                            content_hash: content_hash.to_string(),
+                                            cache_key: cache_key.to_string(),
                                         },
                                     );
                                 }
@@ -69,45 +92,25 @@ impl CacheManager {
         }
     }
 
-    /// Check if a file is cached and valid (mtime unchanged, rules unchanged).
-    pub fn is_valid(&self, path: &Path, rule_hash: &str) -> bool {
+    /// Whether `path`'s already-hashed content and the current cache key
+    /// (enabled rules + tool version) both match what was last cached.
+    pub fn is_valid(&self, path: &Path, content_hash: &str, cache_key: &str) -> bool {
         let path_str = path.to_string_lossy().to_string();
-        if let Some(entry) = self.cache_data.get(&path_str) {
-            // Check mtime
-            if let Ok(metadata) = fs::metadata(path) {
-                if let Ok(mtime) = metadata.modified() {
-                    let current_mtime = mtime
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    // Verify rule hash matches
-                    return entry.mtime == current_mtime && entry.rule_hash == rule_hash;
-                }
-            }
-        }
-        false
+        self.cache_data
+            .get(&path_str)
+            .is_some_and(|entry| entry.content_hash == content_hash && entry.cache_key == cache_key)
     }
 
-    /// Mark a file as cached with current mtime and rule hash.
-    pub fn mark_valid(&mut self, path: &Path, rule_hash: &str) -> Result<(), String> {
-        if let Ok(metadata) = fs::metadata(path) {
-            if let Ok(mtime) = metadata.modified() {
-                let mtime_secs = mtime
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .map_err(|e| format!("Failed to get mtime: {e}"))?
-                    .as_secs();
-                let path_str = path.to_string_lossy().to_string();
-                self.cache_data.insert(
-                    path_str,
-                    CacheEntry {
-                        mtime: mtime_secs,
-                        rule_hash: rule_hash.to_string(),
-                    },
-                );
-                return Ok(());
-            }
-        }
-        Err("Failed to get file metadata".to_string())
+    /// Mark a file as cached with its current content hash and cache key.
+    pub fn mark_valid(&mut self, path: &Path, content_hash: &str, cache_key: &str) {
+        let path_str = path.to_string_lossy().to_string();
+        self.cache_data.insert(
+            path_str,
+            CacheEntry {
+                content_hash: content_hash.to_string(),
+                cache_key: cache_key.to_string(),
+            },
+        );
     }
 
     /// Save cache to disk.
@@ -122,13 +125,13 @@ impl CacheManager {
             entries.insert(
                 path.clone(),
                 json!({
-                    "mtime": entry.mtime,
-                    "rule_hash": entry.rule_hash,
+                    "content_hash": entry.content_hash,
+                    "cache_key": entry.cache_key,
                 }),
             );
         }
         let cache_json = json!({
-            "version": "1",
+            "version": "2",
             "entries": entries,
         });
 
@@ -171,7 +174,7 @@ mod tests {
         fs::write(&test_file, "code").unwrap();
 
         let mut manager = CacheManager::new(tmpdir.path()).unwrap();
-        manager.mark_valid(&test_file, "rule-hash-v1").unwrap();
+        manager.mark_valid(&test_file, &hash_content("code"), "rule-hash-v1");
         manager.save().unwrap();
 
         // Verify cache file exists
@@ -180,19 +183,36 @@ mod tests {
     }
 
     #[test]
-    fn cache_detects_mtime_changes() {
+    fn cache_detects_content_changes_even_with_an_unchanged_mtime() {
         let tmpdir = TempDir::new().unwrap();
         let test_file = tmpdir.path().join("test.js");
         fs::write(&test_file, "code").unwrap();
 
         let mut manager = CacheManager::new(tmpdir.path()).unwrap();
-        manager.mark_valid(&test_file, "rule-hash-v1").unwrap();
-        assert!(manager.is_valid(&test_file, "rule-hash-v1"));
+        manager.mark_valid(&test_file, &hash_content("code"), "rule-hash-v1");
+        assert!(manager.is_valid(&test_file, &hash_content("code"), "rule-hash-v1"));
 
-        // Modify file (sleep longer to ensure mtime changes on all filesystems)
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        fs::write(&test_file, "modified code").unwrap();
-        assert!(!manager.is_valid(&test_file, "rule-hash-v1"));
+        // Different content hash invalidates regardless of what happened to
+        // the file's mtime -- there is no mtime check left to fool.
+        assert!(!manager.is_valid(&test_file, &hash_content("modified code"), "rule-hash-v1"));
+    }
+
+    #[test]
+    fn identical_content_stays_valid_even_if_rewritten() {
+        // Simulates a fresh checkout: the file is rewritten (a real mtime
+        // bump would occur here on a real filesystem) but with byte-for-byte
+        // identical content, so the content hash -- and therefore validity
+        // -- is unchanged.
+        let tmpdir = TempDir::new().unwrap();
+        let test_file = tmpdir.path().join("test.js");
+        fs::write(&test_file, "code").unwrap();
+
+        let mut manager = CacheManager::new(tmpdir.path()).unwrap();
+        let hash = hash_content("code");
+        manager.mark_valid(&test_file, &hash, "rule-hash-v1");
+
+        fs::write(&test_file, "code").unwrap();
+        assert!(manager.is_valid(&test_file, &hash_content("code"), "rule-hash-v1"));
     }
 
     #[test]
@@ -202,11 +222,12 @@ mod tests {
         fs::write(&test_file, "code").unwrap();
 
         let mut manager = CacheManager::new(tmpdir.path()).unwrap();
-        manager.mark_valid(&test_file, "rule-hash-v1").unwrap();
-        assert!(manager.is_valid(&test_file, "rule-hash-v1"));
+        let hash = hash_content("code");
+        manager.mark_valid(&test_file, &hash, "rule-hash-v1");
+        assert!(manager.is_valid(&test_file, &hash, "rule-hash-v1"));
 
         // Different rule hash should invalidate
-        assert!(!manager.is_valid(&test_file, "rule-hash-v2"));
+        assert!(!manager.is_valid(&test_file, &hash, "rule-hash-v2"));
     }
 
     #[test]
@@ -214,11 +235,12 @@ mod tests {
         let tmpdir = TempDir::new().unwrap();
         let test_file = tmpdir.path().join("test.js");
         fs::write(&test_file, "code").unwrap();
+        let hash = hash_content("code");
 
         // Save cache
         {
             let mut manager = CacheManager::new(tmpdir.path()).unwrap();
-            manager.mark_valid(&test_file, "rule-hash-v1").unwrap();
+            manager.mark_valid(&test_file, &hash, "rule-hash-v1");
             manager.save().unwrap();
         }
 
@@ -227,7 +249,7 @@ mod tests {
             let mut manager = CacheManager::new(tmpdir.path()).unwrap();
             manager.load().unwrap();
             assert_eq!(manager.stats().0, 1);
-            assert!(manager.is_valid(&test_file, "rule-hash-v1"));
+            assert!(manager.is_valid(&test_file, &hash, "rule-hash-v1"));
         }
     }
 
@@ -241,5 +263,35 @@ mod tests {
         let mut manager = CacheManager::new(tmpdir.path()).unwrap();
         assert!(manager.load().is_ok()); // Should not error on corrupt cache
         assert_eq!(manager.stats().0, 0); // Cache is empty after loading corrupt file
+    }
+
+    #[test]
+    fn hash_content_is_deterministic_and_sensitive_to_every_byte() {
+        assert_eq!(hash_content("const a = 1;"), hash_content("const a = 1;"));
+        assert_ne!(hash_content("const a = 1;"), hash_content("const a = 2;"));
+    }
+
+    #[test]
+    fn old_mtime_format_cache_is_silently_ignored_not_misread() {
+        // A cache.json written by the pre-content-hash version of this tool
+        // has "mtime"/"rule_hash" fields, not "content_hash"/"cache_key".
+        // load() must skip entries missing the new fields rather than
+        // somehow treating the old shape as valid.
+        let tmpdir = TempDir::new().unwrap();
+        let cache_dir = tmpdir.path().join(".custom-biome-lint-cache");
+        fs::create_dir_all(&cache_dir).unwrap();
+        fs::write(
+            cache_dir.join("cache.json"),
+            r#"{"version":"1","entries":{"/some/file.js":{"mtime":123,"rule_hash":"abc"}}}"#,
+        )
+        .unwrap();
+
+        let mut manager = CacheManager::new(tmpdir.path()).unwrap();
+        manager.load().unwrap();
+        assert_eq!(
+            manager.stats().0,
+            0,
+            "old-format entry must not be loaded as valid"
+        );
     }
 }
