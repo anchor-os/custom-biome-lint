@@ -174,11 +174,13 @@ do not relax `=0.5.7` to `0.5` or `^0.5.7`, without rebuilding from a clean
 `target/` and a deleted `Cargo.lock`. `Cargo.lock` is committed for the same
 reason. If you do want to move to a newer Biome, check each of the six crates'
 own latest published version first — **they are not always released in
-lockstep at the same version number.** `biome_rowan` has shipped `0.5.8` while
-`biome_js_parser` and `biome_js_syntax` are still at `0.5.7` (verified against
-the crates.io API), which is exactly the mismatch this pin exists to prevent.
-Bump each crate to its own actual latest, not to one shared number, and expect
-to fix compile errors in the rules. `.github/workflows/biome-upgrade-check.yml`
+lockstep at the same version number.** As of 2026-08-07, `biome_rowan` had
+shipped `0.5.8` while `biome_js_parser` and `biome_js_syntax` were still at
+`0.5.7` (verified against the crates.io API) — an instance of the mismatch
+this pin exists to prevent, not a permanent state; check current versions
+rather than relying on this snapshot. Bump each crate to its own actual
+latest, not to one shared number, and expect to fix compile errors in the
+rules. `.github/workflows/biome-upgrade-check.yml`
 automates exactly this check monthly (and on demand via `workflow_dispatch`)
 against a disposable checkout, so there's a standing, current answer to
 "can we upgrade yet" instead of finding out only when someone tries by hand.

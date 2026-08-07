@@ -91,6 +91,15 @@ where
 
     if rules.is_empty() {
         reporter.warn("every rule is disabled by ignoreBiomeExtensionRules; nothing to check");
+        // --format json must always produce a document on stdout, even here:
+        // returning immediately (as this used to) left a CI consumer parsing
+        // stdout as JSON with nothing to parse. --write-fix has no rules to
+        // fix either way, so it still returns early without a report.
+        if !args.write_fix {
+            let mut totals = tally(&[], 0);
+            totals.elapsed = start.elapsed();
+            reporter.print_report(&[], &totals, args.format);
+        }
         return ExitCode::SUCCESS;
     }
 

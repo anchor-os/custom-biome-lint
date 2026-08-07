@@ -315,3 +315,35 @@ mod extensions {
         assert!(!lint_source(source, Path::new("a.js"), &rules).is_empty());
     }
 }
+
+mod cli_behavior {
+    use std::fs;
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    #[test]
+    fn json_format_still_emits_a_document_when_every_rule_is_disabled() {
+        let tmpdir = TempDir::new().unwrap();
+        fs::write(
+            tmpdir.path().join("package.json"),
+            r#"{"ignoreBiomeExtensionRules":["no-native-map","no-arrow-function-create-selector","reselect-arity-match"]}"#,
+        )
+        .unwrap();
+        fs::write(tmpdir.path().join("clean.js"), "export const x = 1;\n").unwrap();
+
+        let output = Command::new(env!("CARGO_BIN_EXE_custom-biome-lint"))
+            .arg(".")
+            .arg("--format")
+            .arg("json")
+            .arg("--no-cache")
+            .current_dir(tmpdir.path())
+            .output()
+            .expect("failed to run custom-biome-lint");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let parsed: serde_json::Value =
+            serde_json::from_str(stdout.trim()).expect("stdout must be valid JSON");
+        assert_eq!(parsed["summary"]["clean"], true);
+        assert_eq!(parsed["files"].as_array().unwrap().len(), 0);
+    }
+}

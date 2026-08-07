@@ -21,6 +21,7 @@ permissions:
 jobs:
   try-latest-biome:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -41,7 +42,8 @@ jobs:
         run: |
           for crate in biome_js_parser biome_js_syntax biome_rowan biome_parser biome_diagnostics biome_console; do
             # crates.io's API 403s any request with no User-Agent.
-            version=$(curl -sf "https://crates.io/api/v1/crates/$crate" \
+            version=$(curl -sf --connect-timeout 10 --max-time 60 --retry 3 \
+              "https://crates.io/api/v1/crates/$crate" \
               -H "User-Agent: custom-biome-lint-upgrade-check (github.com/anchor-os/custom-biome-lint)" \
               | python3 -c "import json, sys; print(json.load(sys.stdin)['crate']['max_stable_version'])")
             if [ -z "$version" ]; then

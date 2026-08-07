@@ -150,7 +150,7 @@ cargo build --release
 
 Expected output — **12 errors in 6 files**, exit code 1:
 
-```
+```text
 fixtures/no_arrow_function_create_selector/edge-cases.js
   20:23  error  Avoid wrapping createSelector in an arrow function for "makeup". ...  no-arrow-function-create-selector
 
