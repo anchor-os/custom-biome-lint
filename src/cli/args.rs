@@ -1,3 +1,11 @@
+/// Output format for the diagnostics report.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    #[default]
+    Text,
+    Json,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CliArgs {
     /// Glob pattern to lint. `None` means "use the registry's default".
@@ -17,6 +25,8 @@ pub struct CliArgs {
     pub parallel: bool,
     /// Disable incremental caching (default: false, caching is enabled).
     pub no_cache: bool,
+    /// How to print the diagnostics report (default: human-readable text).
+    pub format: OutputFormat,
 }
 
 impl CliArgs {
@@ -29,7 +39,8 @@ impl CliArgs {
             ..Default::default()
         };
 
-        for arg in args {
+        let mut iter = args.into_iter();
+        while let Some(arg) = iter.next() {
             match arg.as_str() {
                 "-h" | "--help" => parsed.help = true,
                 "-V" | "--version" => parsed.version = true,
@@ -41,6 +52,20 @@ impl CliArgs {
                 "--parallel" => parsed.parallel = true,
                 "--no-parallel" => parsed.parallel = false,
                 "--no-cache" => parsed.no_cache = true,
+                "--format" => {
+                    let value = iter
+                        .next()
+                        .ok_or_else(|| "--format requires a value: text or json".to_string())?;
+                    parsed.format = match value.as_str() {
+                        "text" => OutputFormat::Text,
+                        "json" => OutputFormat::Json,
+                        other => {
+                            return Err(format!(
+                                "unknown --format value: {other} (expected text or json)"
+                            ))
+                        }
+                    };
+                }
                 other if other.starts_with("--") => {
                     return Err(format!("unknown flag: {other}"));
                 }
@@ -68,6 +93,9 @@ impl CliArgs {
 
         if parsed.dry_run && !parsed.write_fix {
             return Err("--dry-run only applies to --write-fix".to_string());
+        }
+        if parsed.write_fix && parsed.format == OutputFormat::Json {
+            return Err("--format json is not supported together with --write-fix".to_string());
         }
 
         Ok(parsed)
@@ -175,5 +203,40 @@ mod tests {
         assert!(!args.parallel);
         assert!(args.no_cache);
         assert_eq!(args.pattern.as_deref(), Some("src/**/*.js"));
+    }
+
+    #[test]
+    fn format_defaults_to_text() {
+        assert_eq!(parse(&[]).unwrap().format, OutputFormat::Text);
+    }
+
+    #[test]
+    fn format_flag_accepts_json_and_text() {
+        assert_eq!(
+            parse(&["--format", "json"]).unwrap().format,
+            OutputFormat::Json
+        );
+        assert_eq!(
+            parse(&["--format", "text"]).unwrap().format,
+            OutputFormat::Text
+        );
+    }
+
+    #[test]
+    fn format_flag_rejects_unknown_value_and_missing_value() {
+        assert!(parse(&["--format", "yaml"]).is_err());
+        // Nothing follows "--format" here, so it must error rather than
+        // silently leave the format at its default.
+        assert!(parse(&["src/**/*.js", "--format"]).is_err());
+    }
+
+    #[test]
+    fn json_format_is_rejected_with_write_fix() {
+        // --write-fix's report has its own shape; conflating the two flags
+        // would either need to invent a --write-fix JSON schema no one asked
+        // for yet, or silently ignore --format, so reject the combination.
+        assert!(parse(&["--write-fix", "--format", "json"]).is_err());
+        assert!(parse(&["--format", "json", "--write-fix"]).is_err());
+        assert!(parse(&["--format", "text", "--write-fix"]).is_ok());
     }
 }

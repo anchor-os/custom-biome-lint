@@ -20,8 +20,5 @@ pub trait Rule: Send + Sync {
     /// Extensions this rule can analyze, with leading dots (e.g. `[".js", ".jsx"]`).
     fn supported_extensions(&self) -> &'static [&'static str];
 
-    /// Glob used when the CLI is invoked without a pattern.
-    fn default_pattern(&self) -> &'static str;
-
     fn check(&self, file: &FileContext) -> Vec<Violation>;
 }

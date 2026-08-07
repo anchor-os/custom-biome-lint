@@ -9,13 +9,13 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
-pub use args::CliArgs;
+pub use args::{CliArgs, OutputFormat};
 pub use output::{Reporter, HELP};
 
 use crate::analyzer::{analyze_file, discover_files, resolve_pattern, GlobSet};
-use crate::cache::CacheManager;
-use crate::config::PackageConfig;
-use crate::diagnostics::{tally, FileReport, Violation};
+use crate::cache::{hash_content, CacheManager};
+use crate::config::{PackageConfig, RuleSeverity};
+use crate::diagnostics::{tally, FileReport, Severity, Violation};
 use crate::fixer::Fixer;
 use crate::rules::RuleRegistry;
 use crate::{dlog, vlog};
@@ -91,6 +91,15 @@ where
 
     if rules.is_empty() {
         reporter.warn("every rule is disabled by ignoreBiomeExtensionRules; nothing to check");
+        // --format json must always produce a document on stdout, even here:
+        // returning immediately (as this used to) left a CI consumer parsing
+        // stdout as JSON with nothing to parse. --write-fix has no rules to
+        // fix either way, so it still returns early without a report.
+        if !args.write_fix {
+            let mut totals = tally(&[], 0);
+            totals.elapsed = start.elapsed();
+            reporter.print_report(&[], &totals, args.format);
+        }
         return ExitCode::SUCCESS;
     }
 
@@ -142,24 +151,23 @@ where
         CacheManager::new(cwd).unwrap()
     };
 
-    // Compute rule hash to detect rule changes
-    let rule_hash = compute_rule_hash(&rules);
-    dlog!(reporter, "rule_hash = {rule_hash}");
+    // Compute the cache key: enabled rules + tool version. Either changing
+    // invalidates every cached file at once (see compute_cache_key).
+    let cache_key = compute_cache_key(&rules);
+    dlog!(reporter, "cache_key = {cache_key}");
 
     // Analyze files (parallel or sequential)
     let (analyzed_files, unparsed, checked) = if args.parallel {
-        analyze_files_parallel(&discovery.files, &rules, &rule_hash, &cache, cwd, &reporter)
+        analyze_files_parallel(&discovery.files, &rules, &cache_key, &cache)
     } else {
-        analyze_files_sequential(&discovery.files, &rules, &rule_hash, &cache, cwd, &reporter)
+        analyze_files_sequential(&discovery.files, &rules, &cache_key, &cache, &reporter)
     };
 
     // Mark analyzed files as cached
     let mut cache_hits = 0usize;
-    for (file, analyzed) in &analyzed_files {
-        if analyzed.parsed_cleanly
-            && analyzed.violations.is_empty()
-            && cache.mark_valid(file, &rule_hash).is_ok()
-        {
+    for (file, source, analyzed) in &analyzed_files {
+        if analyzed.parsed_cleanly && analyzed.violations.is_empty() {
+            cache.mark_valid(file, &hash_content(source), &cache_key);
             cache_hits += 1;
         }
     }
@@ -175,12 +183,13 @@ where
     let mut reports = Vec::new();
     let mut to_fix: BTreeMap<PathBuf, Vec<Violation>> = BTreeMap::new();
 
-    for (file, analyzed) in analyzed_files {
+    for (file, source, mut analyzed) in analyzed_files {
         if !analyzed.parsed_cleanly {
             reporter.warn(&format!("parse errors in {}", file.display()));
         }
 
-        let source = fs::read_to_string(&file).unwrap_or_default();
+        apply_severity_overrides(&mut analyzed.violations, &config);
+
         vlog!(
             reporter,
             3,
@@ -238,9 +247,13 @@ where
 
     let mut totals = tally(&reports, checked);
     totals.elapsed = start.elapsed();
-    reporter.print_report(&reports, &totals);
+    reporter.print_report(&reports, &totals, args.format);
 
-    if cache_saved {
+    // The cache-location notice goes to stdout, so it must not appear in
+    // --format json mode: that stream is a single machine-readable document,
+    // and appending a plain-text line after it would make the output invalid
+    // JSON for any consumer that doesn't stop reading after the first value.
+    if cache_saved && args.format == OutputFormat::Text {
         report_cache_location(&reporter, &cache, cwd);
     }
 
@@ -309,8 +322,25 @@ fn display_path(path: &Path, cwd: &Path) -> PathBuf {
     path.strip_prefix(cwd).unwrap_or(path).to_path_buf()
 }
 
-/// Compute a hash of all enabled rules to detect rule changes.
-fn compute_rule_hash(rules: &[&dyn crate::Rule]) -> String {
+/// Applies package.json's per-rule "warn"/"error" severity overrides.
+/// "off" never reaches here: `RuleRegistry::enabled` already keeps an
+/// off rule from running at all, so it has no violations to override.
+fn apply_severity_overrides(violations: &mut [Violation], config: &PackageConfig) {
+    for violation in violations {
+        match config.severity_override(violation.rule) {
+            Some(RuleSeverity::Warn) => violation.severity = Severity::Warning,
+            Some(RuleSeverity::Error) => violation.severity = Severity::Error,
+            Some(RuleSeverity::Off) | None => {}
+        }
+    }
+}
+
+/// Computes the cache key that gates every cached entry at once: the enabled
+/// rule set plus the tool's own version. Either changing means past cache
+/// entries can no longer be trusted -- a rule's detection logic or a rule
+/// being turned on/off can change what a given file's content produces, and
+/// so can a tool upgrade, even though the file itself never changed.
+fn compute_cache_key(rules: &[&dyn crate::Rule]) -> String {
     // Sorted so the hash is independent of registration order, and joined with
     // a separator so `["ab", "c"]` and `["a", "bc"]` cannot collide.
     let mut rule_names: Vec<&str> = rules.iter().map(|r| r.name()).collect();
@@ -318,29 +348,29 @@ fn compute_rule_hash(rules: &[&dyn crate::Rule]) -> String {
 
     let mut hasher = DefaultHasher::new();
     rule_names.join(",").hash(&mut hasher);
+    VERSION.hash(&mut hasher);
     format!("{:x}", hasher.finish())
 }
 
-/// Analyze files sequentially.
+/// Analyze files sequentially. Each file is read once; its content hash
+/// decides cache validity, and the same in-memory source is reused for
+/// parsing (and later for verbose line-count logging) if it's not.
 fn analyze_files_sequential(
     files: &[PathBuf],
     rules: &[&dyn crate::Rule],
-    rule_hash: &str,
+    cache_key: &str,
     cache: &CacheManager,
-    _cwd: &Path,
     reporter: &Reporter,
-) -> (Vec<(PathBuf, crate::analyzer::AnalyzedFile)>, usize, usize) {
+) -> (
+    Vec<(PathBuf, String, crate::analyzer::AnalyzedFile)>,
+    usize,
+    usize,
+) {
     let mut analyzed = Vec::new();
     let mut unparsed = 0usize;
     let mut checked = 0usize;
 
     for file in files {
-        // Check cache first
-        if cache.is_valid(file, rule_hash) {
-            dlog!(reporter, "cache hit: {}", file.display());
-            continue;
-        }
-
         let source = match fs::read_to_string(file) {
             Ok(source) => source,
             Err(error) => {
@@ -348,46 +378,52 @@ fn analyze_files_sequential(
                 continue;
             }
         };
+
+        if cache.is_valid(file, &hash_content(&source), cache_key) {
+            dlog!(reporter, "cache hit: {}", file.display());
+            continue;
+        }
         checked += 1;
 
         let result = analyze_file(file, &source, rules);
         if !result.parsed_cleanly {
             unparsed += 1;
         }
-        analyzed.push((file.clone(), result));
+        analyzed.push((file.clone(), source, result));
     }
 
     (analyzed, unparsed, checked)
 }
 
-/// Analyze files in parallel using rayon.
+/// Analyze files in parallel using rayon. Same read-once, hash-to-decide
+/// approach as the sequential path, just fanned out across files.
 fn analyze_files_parallel(
     files: &[PathBuf],
     rules: &[&dyn crate::Rule],
-    rule_hash: &str,
+    cache_key: &str,
     cache: &CacheManager,
-    _cwd: &Path,
-    _reporter: &Reporter,
-) -> (Vec<(PathBuf, crate::analyzer::AnalyzedFile)>, usize, usize) {
-    // First pass: filter out cached files
-    let files_to_analyze: Vec<_> = files
-        .iter()
-        .filter(|f| !cache.is_valid(f, rule_hash))
-        .cloned()
-        .collect();
-
-    // Parallel analysis
-    let analyzed: Vec<_> = files_to_analyze
-        .into_par_iter()
-        .map(|file| {
-            let source = fs::read_to_string(&file).unwrap_or_default();
-            let result = analyze_file(&file, &source, rules);
-            (file, result)
+) -> (
+    Vec<(PathBuf, String, crate::analyzer::AnalyzedFile)>,
+    usize,
+    usize,
+) {
+    let analyzed: Vec<_> = files
+        .par_iter()
+        .filter_map(|file| {
+            let source = fs::read_to_string(file).ok()?;
+            if cache.is_valid(file, &hash_content(&source), cache_key) {
+                return None;
+            }
+            let result = analyze_file(file, &source, rules);
+            Some((file.clone(), source, result))
         })
         .collect();
 
     // Count metrics
-    let unparsed = analyzed.iter().filter(|(_, a)| !a.parsed_cleanly).count();
+    let unparsed = analyzed
+        .iter()
+        .filter(|(_, _, a)| !a.parsed_cleanly)
+        .count();
     let checked = analyzed.len();
 
     (analyzed, unparsed, checked)

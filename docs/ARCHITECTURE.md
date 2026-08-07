@@ -89,7 +89,13 @@ know `analyze_file` exists. That is a real readability cost, accepted knowingly.
 
 ### What it buys
 
-**Measured**, running against the dashboard's `src/` (4393 files, warm cache):
+**Measured** at the time, running against the dashboard's `src/` (4393 files,
+warm cache) — a private tree not available in this repo, so treat this as a
+historical data point rather than something you can reproduce directly.
+`scripts/benchmark.sh` (see [BENCHMARKING.md](BENCHMARKING.md)) is a
+re-runnable version of the same "N rules vs. wall time" methodology against a
+self-contained synthetic corpus, and confirms the same qualitative finding —
+parsing dominates rule-walk cost — with current, reproducible numbers:
 
 | Rules enabled | Wall time |
 | --- | --- |
@@ -166,8 +172,18 @@ statement for any of them anywhere in `src/`.
 **This is load-bearing.** Do not "clean up" these three unused dependencies, and
 do not relax `=0.5.7` to `0.5` or `^0.5.7`, without rebuilding from a clean
 `target/` and a deleted `Cargo.lock`. `Cargo.lock` is committed for the same
-reason. If you do want to move to a newer Biome, move all six together and
-expect to fix compile errors in the rules.
+reason. If you do want to move to a newer Biome, check each of the six crates'
+own latest published version first — **they are not always released in
+lockstep at the same version number.** As of 2026-08-07, `biome_rowan` had
+shipped `0.5.8` while `biome_js_parser` and `biome_js_syntax` were still at
+`0.5.7` (verified against the crates.io API) — an instance of the mismatch
+this pin exists to prevent, not a permanent state; check current versions
+rather than relying on this snapshot. Bump each crate to its own actual
+latest, not to one shared number, and expect to fix compile errors in the
+rules. `.github/workflows/biome-upgrade-check.yml`
+automates exactly this check monthly (and on demand via `workflow_dispatch`)
+against a disposable checkout, so there's a standing, current answer to
+"can we upgrade yet" instead of finding out only when someone tries by hand.
 
 ## Decision: suppression and extension filtering live in the runner
 
@@ -211,8 +227,9 @@ a future TypeScript-only or JSX-only rule needs no special casing.
 
 ## Decision: `ignoreBiomeExtensionRules` in `package.json`
 
-Rules are disabled by name from the nearest `package.json` at or above the
-working directory:
+Rule severities are set by name from the nearest `package.json` at or above the
+working directory. Two shapes are accepted — a legacy array (every entry means
+`"off"`) and an object mapping rule name to `"off"`/`"warn"`/`"error"`:
 
 ```json
 {
@@ -220,30 +237,45 @@ working directory:
 }
 ```
 
+```json
+{
+  "ignoreBiomeExtensionRules": {
+    "no-native-map": "off",
+    "reselect-arity-match": "warn"
+  }
+}
+```
+
 **Why `package.json` rather than a dedicated config file.** The tool is meant to
 sit alongside Biome in a JS project that already has a `package.json`. Adding a
 `.custombiomelintrc` would be one more file for developers to know about, and
-the config is a single array of strings — it does not justify its own file.
+the config is small enough that it does not justify its own file.
 
 **Why the key is named that.** It is namespaced enough not to collide with
 anything npm or Biome uses, and it reads as "rules of the Biome-extension tool
-that should be ignored."
+that should be ignored" — the object form's `"warn"`/`"error"` values are an
+extension of that same key rather than a second, differently-named setting.
 
 **Behaviour.** `PackageConfig::load` walks up from the working directory via
 `Path::ancestors()` and takes the first `package.json` it finds. A missing file
-is **not an error** — the tool simply runs with all rules enabled, which keeps
-it usable outside a JS project (e.g. running it against `fixtures/`). Malformed
-config is reported as a warning on stderr rather than a hard failure, and the
-run continues:
+is **not an error** — the tool simply runs with all rules enabled at their
+default severity, which keeps it usable outside a JS project (e.g. running it
+against `fixtures/`). Malformed config is reported as a warning on stderr
+rather than a hard failure, and the run continues:
 
 - unreadable file -> warning, all rules enabled
 - invalid JSON -> warning, all rules enabled
-- key present but not an array -> warning, key ignored
+- key present but not an array or object -> warning, key ignored
 - array containing a non-string -> warning naming the bad entry, other entries honoured
+- object value that isn't `"off"`/`"warn"`/`"error"` -> warning naming the bad entry, other entries honoured
 
-The registry then exposes `.enabled(&config)` and `.ignored(&config)`; the CLI
-uses the first to drive the run and the second to report what was skipped under
-`-v`.
+`"off"` is handled entirely by `RuleRegistry::enabled`/`::ignored`, which the
+CLI uses to decide which rules run at all and to report what was skipped under
+`-v`. `"warn"`/`"error"` do not change whether a rule runs — they only relabel
+the severity of violations it reports, via `PackageConfig::severity_override`
+applied in the CLI after `check()` returns and before the report is built. A
+`"warn"` violation is still printed and counted, but does not make the run
+exit non-zero the way an `"error"` (the default) does.
 
 ## Module-by-module walkthrough
 
@@ -354,14 +386,17 @@ plain `.js` files and JSX is a superset of the syntax that plain JS files use.
 | `no_native_map.rs` (298 lines) | Immutable.js `Map` rule |
 | `no_arrow_function_create_selector.rs` (120 lines) | Memoization rule |
 | `reselect_arity_match.rs` (115 lines) | Arity rule |
-| `mod.rs` | Re-exports, `JS_EXTENSIONS`, `JS_PATTERN` constants |
+| `mod.rs` | Re-exports, `JS_EXTENSIONS` constant |
 
 The trait is `Send + Sync` so a future parallel implementation over files needs
 no trait change. `registry.rs::with_all_rules` is the single registration point
 — the one place to edit when adding a rule. `supported_extensions()` on the
 registry is the union across rules, and `default_pattern()` derives
 `src/**/*.{js,jsx}` from that union rather than hardcoding it, so registering a
-`.ts` rule automatically widens the default glob.
+`.ts` rule automatically widens the default glob. Note this is
+`RuleRegistry::default_pattern()`, not a method on `Rule` itself — the trait has
+no `default_pattern()`, since the CLI's default glob is a property of the whole
+registered rule set, not of any single rule.
 
 `no_native_map.rs` is by far the largest rule because it is the only stateful
 one: it must track how `immutable` entered the file (default import, named
@@ -461,7 +496,7 @@ matching ESLint's behaviour.
 The summary reports file count and wall time on both paths:
 
 ```
-✖ 7 errors in 3 files (9 files checked in 5ms)
+✖ 12 errors in 6 files (12 files checked in 5ms)
 ✔ No violations found (4393 files checked in 2.15s)
 ```
 

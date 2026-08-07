@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use crate::diagnostics::{format_reports, FileReport, Totals};
+use crate::cli::args::OutputFormat;
+use crate::diagnostics::{format_reports, format_reports_json, FileReport, Totals};
 use crate::fixer::FixReport;
 use crate::rules::RuleRegistry;
 
@@ -18,6 +19,9 @@ ARGS:
 FLAGS:
         --write-fix    Add a suppression comment for every violation, in place
         --dry-run      With --write-fix, report the comments without writing
+        --format <text|json>
+                       Diagnostics output format (default: text). Not
+                       supported together with --write-fix.
     -v, --verbose      Standard verbosity (shows rules, skips)
     -vv                Deep verbosity (file discovery, rule execution)
     -vvv               Super verbose (per-file AST details)
@@ -27,9 +31,14 @@ FLAGS:
     -V, --version      Show version
 
 CONFIGURATION:
-    package.json may disable rules by name:
+    package.json may set rule severities by name:
 
         { \"ignoreBiomeExtensionRules\": [\"no-native-map\"] }
+        { \"ignoreBiomeExtensionRules\": { \"no-native-map\": \"off\",
+                                          \"reselect-arity-match\": \"warn\" } }
+
+    The array form is shorthand for \"off\". The object form also accepts
+    \"warn\" (reported but does not fail the run) and \"error\" (default).
 
 SUPPRESSIONS:
     // biome-ignore-line rule-name[, rule-name2]
@@ -97,8 +106,11 @@ impl Reporter {
         eprintln!("custom-biome-lint: error: {message}");
     }
 
-    pub fn print_report(&self, reports: &[FileReport], totals: &Totals) {
-        print!("{}", format_reports(reports, totals));
+    pub fn print_report(&self, reports: &[FileReport], totals: &Totals, format: OutputFormat) {
+        match format {
+            OutputFormat::Text => print!("{}", format_reports(reports, totals)),
+            OutputFormat::Json => println!("{}", format_reports_json(reports, totals)),
+        }
     }
 
     /// Prints what `--write-fix` changed, or would change in a dry run.

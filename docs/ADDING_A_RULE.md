@@ -19,7 +19,7 @@ use biome_rowan::AstNode;
 use crate::analyzer::runner::FileContext;
 use crate::diagnostics::Violation;
 use crate::rules::rule::Rule;
-use crate::rules::{JS_EXTENSIONS, JS_PATTERN};
+use crate::rules::JS_EXTENSIONS;
 
 const MESSAGE: &str = "Avoid console.log in committed code.";
 
@@ -36,10 +36,6 @@ impl Rule for NoConsoleLog {
 
     fn supported_extensions(&self) -> &'static [&'static str] {
         JS_EXTENSIONS
-    }
-
-    fn default_pattern(&self) -> &'static str {
-        JS_PATTERN
     }
 
     fn check(&self, file: &FileContext) -> Vec<Violation> {
@@ -91,7 +87,6 @@ pub trait Rule: Send + Sync {
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
     fn supported_extensions(&self) -> &'static [&'static str];
-    fn default_pattern(&self) -> &'static str;
     fn check(&self, file: &FileContext) -> Vec<Violation>;
 }
 ```
@@ -101,8 +96,12 @@ pub trait Rule: Send + Sync {
 | `name` | **Kebab-case.** This is the identifier users write in suppression comments and in `ignoreBiomeExtensionRules`, and what appears in the output's rightmost column. |
 | `description` | One line, shown under `-v`. |
 | `supported_extensions` | Leading dots, e.g. `[".js", ".jsx"]`. Use the `JS_EXTENSIONS` constant unless your rule needs a different set. The runner skips files whose extension is not listed. |
-| `default_pattern` | Glob used when the CLI gets no pattern. Use `JS_PATTERN` unless your rule targets different files. |
 | `check` | Detection logic. Receives an already-parsed file. |
+
+There is no `default_pattern` on the trait: the CLI's default glob is derived by
+`RuleRegistry::default_pattern()` from the union of every registered rule's
+`supported_extensions()`, so registering a rule with a new extension widens the
+default automatically — no per-rule glob to keep in sync.
 
 ### What `FileContext` gives you
 

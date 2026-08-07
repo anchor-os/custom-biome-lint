@@ -32,6 +32,8 @@ including one known false-positive class, are in [docs/RULES.md](docs/RULES.md).
 | [docs/TESTING.md](docs/TESTING.md) | Test suites, clippy, fixture and real-tree runs, portability check |
 | [docs/CI_CD_INTEGRATION.md](docs/CI_CD_INTEGRATION.md) | Husky and GitLab CI wiring (not yet applied) |
 | [docs/MIGRATION_NOTES.md](docs/MIGRATION_NOTES.md) | The 8 suppression comments still to translate |
+| [docs/INCREMENTAL_CACHING_DOCUMENT.md](docs/INCREMENTAL_CACHING_DOCUMENT.md) | How the content-hash cache works, and why it replaced mtime |
+| [docs/BENCHMARKING.md](docs/BENCHMARKING.md) | Re-runnable performance harness (`scripts/benchmark.sh`) and current numbers |
 
 ## Build
 
@@ -66,6 +68,7 @@ Quote globs so your shell does not expand them first.
 | --- | --- |
 | `--write-fix` | Add a suppression comment for every violation, in place |
 | `--dry-run` | With `--write-fix`, report the comments without writing |
+| `--format <text\|json>` | Diagnostics output format (default: `text`). Not supported with `--write-fix`. |
 | `-v`, `--verbose` | Config source, enabled/skipped rules, resolved pattern |
 | `-vv` | Brace expansion, walk root, discovery counts |
 | `-vvv` | Per-file: rules run, violation count, line count |
@@ -103,10 +106,51 @@ src/selectors/users.js
 ✖ 2 errors in 2 files
 ```
 
+### JSON output
+
+`--format json` prints a single stable JSON document to stdout instead — no
+other stdout content in that mode, so a consumer can parse it directly:
+
+```sh
+custom-biome-lint --format json > report.json
+```
+
+```json
+{
+  "version": 1,
+  "files": [
+    {
+      "path": "src/selectors/users.js",
+      "violations": [
+        {
+          "line": 12,
+          "col": 64,
+          "severity": "error",
+          "rule": "reselect-arity-match",
+          "message": "createSelector expects 1 parameter(s) in the result function, but found 2."
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "errors": 1,
+    "warnings": 0,
+    "filesWithViolations": 1,
+    "filesChecked": 9,
+    "elapsedMs": 7,
+    "clean": false
+  }
+}
+```
+
+The schema is additive-only across versions: existing fields never change
+meaning or disappear, so a consumer that reads only the fields it knows about
+keeps working after an upgrade.
+
 ## Configuration
 
-Rules are disabled by name in the nearest `package.json` at or above the working
-directory:
+Rule severities are set by name in the nearest `package.json` at or above the
+working directory, via `ignoreBiomeExtensionRules`. Two shapes are accepted:
 
 ```json
 {
@@ -114,7 +158,27 @@ directory:
 }
 ```
 
-A missing `package.json` is not an error — every rule stays enabled.
+The array form is shorthand for turning listed rules fully `"off"`. For finer
+control, use the object form with `"off"` / `"warn"` / `"error"` per rule:
+
+```json
+{
+  "ignoreBiomeExtensionRules": {
+    "no-native-map": "off",
+    "reselect-arity-match": "warn"
+  }
+}
+```
+
+`"off"` disables the rule entirely, same as the array form. `"warn"` and
+`"error"` don't change whether the rule runs — only the severity of what it
+reports. `"warn"` violations are still printed and still counted, but (unlike
+`"error"`, the default) they don't make the run exit non-zero, so a rule you
+want visibility into without blocking CI can be turned down without silencing
+it. A rule with no entry keeps its default severity (`"error"`).
+
+A missing `package.json` is not an error — every rule stays enabled at its
+default severity.
 
 ## Suppressions
 
@@ -235,12 +299,14 @@ src/
   suppress/                  biome-ignore-line / -next-line parsing
   fixer.rs                   --write-fix: safe suppression-comment placement
   diagnostics/               Violation type and ESLint-style formatter
-fixtures/<rule_name>/        valid.js, invalid.js, suppressed.js per rule
+fixtures/<rule_name>/        valid.js, invalid.js, suppressed.js, edge-cases.js per rule
 tests/integration.rs         end-to-end rule, config and pattern tests
-docs/                        architecture, rules, testing, setup, CI, migration
-.github/workflows/ci.yml     build, test, fmt, clippy, audit, deny
-rustfmt.toml                 formatting config (cargo fmt)
-deny.toml                    license/advisory/source policy (cargo deny)
+scripts/benchmark.sh         re-runnable cold/warm/rayon/rule-cost benchmark
+docs/                        architecture, rules, testing, setup, CI, migration, caching, benchmarking
+.github/workflows/ci.yml                  build, test, fmt, clippy, audit, deny
+.github/workflows/biome-upgrade-check.yml monthly + on-demand: can we bump Biome yet?
+rustfmt.toml                  formatting config (cargo fmt)
+deny.toml                     license/advisory/source policy (cargo deny)
 ```
 
 ## Portability
@@ -260,12 +326,12 @@ them or loosen the pins** — see
 ## Testing
 
 ```sh
-cargo test                                    # 62 tests: 38 unit + 23 integration + 1 doctest
+cargo test                                    # 92 tests: 64 unit + 27 integration + 1 doctest
 cargo fmt --all -- --check                    # no diff expected
 cargo clippy --all-targets -- -D warnings     # no warnings expected
 cargo audit                                   # no advisories beyond .cargo/audit.toml's ignore list
 cargo deny check                              # licenses, bans, sources all ok
-./target/release/custom-biome-lint fixtures   # 7 errors across 3 files
+./target/release/custom-biome-lint fixtures   # 12 errors across 6 files
 ```
 
 Full procedure, including running against the real dashboard tree and how the

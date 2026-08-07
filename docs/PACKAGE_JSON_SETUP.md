@@ -87,7 +87,7 @@ CI and the pre-push hook.
 ### `ignoreBiomeExtensionRules`
 
 The tool's only configuration, read from the nearest `package.json` at or above the
-linted files:
+linted files. Two shapes are accepted:
 
 ```json
 {
@@ -95,12 +95,24 @@ linted files:
 }
 ```
 
+```json
+{
+  "ignoreBiomeExtensionRules": {
+    "no-native-map": "off",
+    "reselect-arity-match": "warn"
+  }
+}
+```
+
 | Behaviour | Detail |
 | --- | --- |
 | Location | Nearest `package.json` at or above the linted path |
-| Type | Array of strings; anything else emits a warning and is ignored |
+| Type | Array of strings (shorthand for `"off"`), or an object mapping rule name to `"off"`/`"warn"`/`"error"`; anything else emits a warning and is ignored |
 | Values | Rule names exactly as in [RULES.md](RULES.md), kebab-case |
-| Missing file/key | Not an error — all rules run |
+| `"off"` | Rule does not run at all |
+| `"warn"` | Rule runs; violations are reported but do not fail the run |
+| `"error"` | Default. Rule runs; violations fail the run |
+| Missing file/key | Not an error — all rules run at `"error"` |
 | Unknown rule name | Silently accepted (no error), so typos disable nothing |
 
 That last row is the trap: `"no-native-maps"` looks like it works and does nothing.

@@ -240,7 +240,7 @@ cargo install --path .
 
 ```sh
 cargo test                             # expect 62 passing
-./target/release/custom-biome-lint fixtures   # expect 7 errors in 3 files, exit 1
+./target/release/custom-biome-lint fixtures   # expect 12 errors in 6 files, exit 1
 ```
 
 If both match, the setup is good. [TESTING.md](TESTING.md) covers the full

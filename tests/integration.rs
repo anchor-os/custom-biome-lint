@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use custom_biome_lint::{lint_source, PackageConfig, Rule, RuleRegistry, Violation};
+use custom_biome_lint::{lint_source, PackageConfig, Rule, RuleRegistry, RuleSeverity, Violation};
 
 fn fixture(rule_dir: &str, name: &str) -> (PathBuf, String) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -56,11 +56,11 @@ fn default_pattern_covers_js_and_jsx() {
 }
 
 #[test]
-fn every_rule_has_fixtures_for_all_three_cases() {
+fn every_rule_has_fixtures_for_all_four_cases() {
     let registry = RuleRegistry::with_all_rules();
     for rule in registry.all() {
         let dir = rule.name().replace('-', "_");
-        for case in ["valid.js", "invalid.js", "suppressed.js"] {
+        for case in ["valid.js", "invalid.js", "suppressed.js", "edge-cases.js"] {
             let (_, source) = fixture(&dir, case);
             assert!(!source.trim().is_empty(), "{dir}/{case} is empty");
         }
@@ -113,6 +113,18 @@ mod no_native_map {
             "the import specifier itself is exempt"
         );
     }
+
+    /// Locks in two documented, deliberate quirks (see RULES.md): the
+    /// mapboxgl.Map false positive, and the lack of real scope analysis for
+    /// a shadowed `Map` parameter (flagged at both its declaration and use).
+    #[test]
+    fn edge_cases_produce_exactly_the_documented_violations() {
+        let violations = check_one("no-native-map", "no_native_map", "edge-cases.js");
+        assert_eq!(violations.len(), 3, "got {violations:?}");
+        assert!(violations
+            .iter()
+            .all(|v| v.rule == "no-native-map" && v.message.contains("Immutable.js Map")));
+    }
 }
 
 mod no_arrow_function_create_selector {
@@ -138,6 +150,17 @@ mod no_arrow_function_create_selector {
     #[test]
     fn suppression_comments_silence_the_rule() {
         assert!(check_one(RULE, DIR, "suppressed.js").is_empty());
+    }
+
+    /// Locks in three documented coverage gaps (block body, argument
+    /// position, member-expression callee — none flagged) plus the literal
+    /// `/^make[A-Z]/` factory check: "makeup" does not match it, so it IS
+    /// flagged despite starting with "make".
+    #[test]
+    fn edge_cases_flag_only_the_non_factory_make_prefixed_name() {
+        let violations = check_one(RULE, DIR, "edge-cases.js");
+        assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert!(violations[0].message.contains("\"makeup\""));
     }
 }
 
@@ -170,6 +193,17 @@ mod reselect_arity_match {
         let source = "Reselect.createSelector(a, b, x => x);\n";
         assert_eq!(check_source(RULE, source, Path::new("a.js")).len(), 1);
     }
+
+    /// Locks in three documented gaps (by-reference selector, fewer than 2
+    /// arguments, concise single-param arrow counting as 1 -- none flagged)
+    /// alongside a real mismatch behind a namespaced callee, which still is.
+    #[test]
+    fn edge_cases_flag_only_the_namespaced_mismatch() {
+        let violations = check_one(RULE, DIR, "edge-cases.js");
+        assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert!(violations[0].message.contains("expects 2 parameter(s)"));
+        assert!(violations[0].message.contains("but found 1"));
+    }
 }
 
 mod config {
@@ -184,10 +218,10 @@ mod config {
 
     #[test]
     fn ignored_rules_are_filtered_out() {
-        let config = PackageConfig {
-            ignored_rules: vec!["no-native-map".to_string()],
-            ..PackageConfig::default()
-        };
+        let mut config = PackageConfig::default();
+        config
+            .severities
+            .insert("no-native-map".to_string(), RuleSeverity::Off);
         let registry = RuleRegistry::with_all_rules();
         let enabled: Vec<&str> = registry
             .enabled(&config)
@@ -196,6 +230,25 @@ mod config {
             .collect();
         assert!(!enabled.contains(&"no-native-map"));
         assert_eq!(enabled.len(), registry.len() - 1);
+    }
+
+    #[test]
+    fn warn_severity_does_not_disable_the_rule() {
+        let mut config = PackageConfig::default();
+        config
+            .severities
+            .insert("no-native-map".to_string(), RuleSeverity::Warn);
+        let registry = RuleRegistry::with_all_rules();
+        let enabled: Vec<&str> = registry
+            .enabled(&config)
+            .iter()
+            .map(|rule| rule.name())
+            .collect();
+        assert!(enabled.contains(&"no-native-map"));
+        assert_eq!(
+            config.severity_override("no-native-map"),
+            Some(RuleSeverity::Warn)
+        );
     }
 }
 
@@ -226,8 +279,8 @@ mod patterns {
         let discovered = discover_files(&pattern, manifest_dir());
         assert_eq!(
             discovered.files.len(),
-            9,
-            "expected 3 fixtures for each of 3 rules, got {:?}",
+            12,
+            "expected 4 fixtures for each of 3 rules, got {:?}",
             discovered.files
         );
     }
@@ -260,5 +313,37 @@ mod extensions {
         let source = "const cache = new Map();\n";
         assert!(lint_source(source, Path::new("a.ts"), &rules).is_empty());
         assert!(!lint_source(source, Path::new("a.js"), &rules).is_empty());
+    }
+}
+
+mod cli_behavior {
+    use std::fs;
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    #[test]
+    fn json_format_still_emits_a_document_when_every_rule_is_disabled() {
+        let tmpdir = TempDir::new().unwrap();
+        fs::write(
+            tmpdir.path().join("package.json"),
+            r#"{"ignoreBiomeExtensionRules":["no-native-map","no-arrow-function-create-selector","reselect-arity-match"]}"#,
+        )
+        .unwrap();
+        fs::write(tmpdir.path().join("clean.js"), "export const x = 1;\n").unwrap();
+
+        let output = Command::new(env!("CARGO_BIN_EXE_custom-biome-lint"))
+            .arg(".")
+            .arg("--format")
+            .arg("json")
+            .arg("--no-cache")
+            .current_dir(tmpdir.path())
+            .output()
+            .expect("failed to run custom-biome-lint");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let parsed: serde_json::Value =
+            serde_json::from_str(stdout.trim()).expect("stdout must be valid JSON");
+        assert_eq!(parsed["summary"]["clean"], true);
+        assert_eq!(parsed["files"].as_array().unwrap().len(), 0);
     }
 }

@@ -6,7 +6,7 @@ use biome_rowan::{AstNode, AstSeparatedList};
 use crate::analyzer::runner::FileContext;
 use crate::diagnostics::Violation;
 use crate::rules::rule::Rule;
-use crate::rules::{JS_EXTENSIONS, JS_PATTERN};
+use crate::rules::JS_EXTENSIONS;
 
 pub struct ReselectArityMatch;
 
@@ -21,10 +21,6 @@ impl Rule for ReselectArityMatch {
 
     fn supported_extensions(&self) -> &'static [&'static str] {
         JS_EXTENSIONS
-    }
-
-    fn default_pattern(&self) -> &'static str {
-        JS_PATTERN
     }
 
     fn check(&self, file: &FileContext) -> Vec<Violation> {

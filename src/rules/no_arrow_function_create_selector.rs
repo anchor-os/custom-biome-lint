@@ -7,7 +7,7 @@ use biome_rowan::AstNode;
 use crate::analyzer::runner::FileContext;
 use crate::diagnostics::Violation;
 use crate::rules::rule::Rule;
-use crate::rules::{JS_EXTENSIONS, JS_PATTERN};
+use crate::rules::JS_EXTENSIONS;
 
 pub struct NoArrowFunctionCreateSelector;
 
@@ -22,10 +22,6 @@ impl Rule for NoArrowFunctionCreateSelector {
 
     fn supported_extensions(&self) -> &'static [&'static str] {
         JS_EXTENSIONS
-    }
-
-    fn default_pattern(&self) -> &'static str {
-        JS_PATTERN
     }
 
     fn check(&self, file: &FileContext) -> Vec<Violation> {
