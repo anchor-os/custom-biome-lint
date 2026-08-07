@@ -1,0 +1,65 @@
+name: Biome upgrade check
+
+# Deliberate, low-noise process for the tightly version-coupled biome_* pins
+# (see Cargo.toml and docs/ARCHITECTURE.md#decision-pinning-all-six-biome-crates-to-057):
+# on a schedule and on demand, try building and testing against each pinned
+# crate's latest published version instead of the pinned =0.5.7, in a
+# throwaway checkout that is never committed. A red run here is the actual
+# signal that an upgrade needs deliberate, human attention -- not something
+# to bump casually just because a newer version exists.
+on:
+  schedule:
+    - cron: "0 6 1 * *" # 06:00 UTC on the 1st of each month
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  try-latest-biome:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Bump each pinned crate to its own latest published version
+        # The six biome_* crates are not always released in lockstep at the
+        # same version number -- e.g. biome_rowan can ship 0.5.8 while
+        # biome_js_syntax is still at 0.5.7. That mismatch is exactly the
+        # scenario the Cargo.toml pinning comment warns about, so each pin
+        # is resolved and bumped independently rather than assuming they
+        # move together. Nothing here is ever committed; it only edits this
+        # job's own disposable checkout.
+        run: |
+          for crate in biome_js_parser biome_js_syntax biome_rowan biome_parser biome_diagnostics biome_console; do
+            # crates.io's API 403s any request with no User-Agent.
+            version=$(curl -sf "https://crates.io/api/v1/crates/$crate" \
+              -H "User-Agent: custom-biome-lint-upgrade-check (github.com/anchor-os/custom-biome-lint)" \
+              | python3 -c "import json, sys; print(json.load(sys.stdin)['crate']['max_stable_version'])")
+            if [ -z "$version" ]; then
+              echo "could not resolve a version for $crate" >&2
+              exit 1
+            fi
+            echo "$crate: pinned 0.5.7 -> latest $version"
+            sed -i -E "s/^($crate = )\"=.*\"/\1\"=$version\"/" Cargo.toml
+          done
+          echo "--- Cargo.toml after bump ---"
+          grep '^biome_' Cargo.toml
+
+      - name: Build against the bumped versions
+        # cargo build re-resolves Cargo.lock for just the pins that changed
+        # (their locked versions no longer satisfy the tightened "=" bound);
+        # everything else in the graph stays exactly as committed, so a
+        # failure here is attributable to the Biome bump alone.
+        run: cargo build --release --verbose
+
+      - name: Test against the bumped versions
+        run: cargo test --verbose

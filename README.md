@@ -297,12 +297,13 @@ src/
   suppress/                  biome-ignore-line / -next-line parsing
   fixer.rs                   --write-fix: safe suppression-comment placement
   diagnostics/               Violation type and ESLint-style formatter
-fixtures/<rule_name>/        valid.js, invalid.js, suppressed.js per rule
+fixtures/<rule_name>/        valid.js, invalid.js, suppressed.js, edge-cases.js per rule
 tests/integration.rs         end-to-end rule, config and pattern tests
 docs/                        architecture, rules, testing, setup, CI, migration
-.github/workflows/ci.yml     build, test, fmt, clippy, audit, deny
-rustfmt.toml                 formatting config (cargo fmt)
-deny.toml                    license/advisory/source policy (cargo deny)
+.github/workflows/ci.yml                  build, test, fmt, clippy, audit, deny
+.github/workflows/biome-upgrade-check.yml monthly + on-demand: can we bump Biome yet?
+rustfmt.toml                  formatting config (cargo fmt)
+deny.toml                     license/advisory/source policy (cargo deny)
 ```
 
 ## Portability
