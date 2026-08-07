@@ -56,11 +56,11 @@ fn default_pattern_covers_js_and_jsx() {
 }
 
 #[test]
-fn every_rule_has_fixtures_for_all_three_cases() {
+fn every_rule_has_fixtures_for_all_four_cases() {
     let registry = RuleRegistry::with_all_rules();
     for rule in registry.all() {
         let dir = rule.name().replace('-', "_");
-        for case in ["valid.js", "invalid.js", "suppressed.js"] {
+        for case in ["valid.js", "invalid.js", "suppressed.js", "edge-cases.js"] {
             let (_, source) = fixture(&dir, case);
             assert!(!source.trim().is_empty(), "{dir}/{case} is empty");
         }
@@ -113,6 +113,18 @@ mod no_native_map {
             "the import specifier itself is exempt"
         );
     }
+
+    /// Locks in two documented, deliberate quirks (see RULES.md): the
+    /// mapboxgl.Map false positive, and the lack of real scope analysis for
+    /// a shadowed `Map` parameter (flagged at both its declaration and use).
+    #[test]
+    fn edge_cases_produce_exactly_the_documented_violations() {
+        let violations = check_one("no-native-map", "no_native_map", "edge-cases.js");
+        assert_eq!(violations.len(), 3, "got {violations:?}");
+        assert!(violations
+            .iter()
+            .all(|v| v.rule == "no-native-map" && v.message.contains("Immutable.js Map")));
+    }
 }
 
 mod no_arrow_function_create_selector {
@@ -138,6 +150,17 @@ mod no_arrow_function_create_selector {
     #[test]
     fn suppression_comments_silence_the_rule() {
         assert!(check_one(RULE, DIR, "suppressed.js").is_empty());
+    }
+
+    /// Locks in three documented coverage gaps (block body, argument
+    /// position, member-expression callee — none flagged) plus the literal
+    /// `/^make[A-Z]/` factory check: "makeup" does not match it, so it IS
+    /// flagged despite starting with "make".
+    #[test]
+    fn edge_cases_flag_only_the_non_factory_make_prefixed_name() {
+        let violations = check_one(RULE, DIR, "edge-cases.js");
+        assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert!(violations[0].message.contains("\"makeup\""));
     }
 }
 
@@ -169,6 +192,17 @@ mod reselect_arity_match {
     fn member_expression_callee_is_checked() {
         let source = "Reselect.createSelector(a, b, x => x);\n";
         assert_eq!(check_source(RULE, source, Path::new("a.js")).len(), 1);
+    }
+
+    /// Locks in three documented gaps (by-reference selector, fewer than 2
+    /// arguments, concise single-param arrow counting as 1 -- none flagged)
+    /// alongside a real mismatch behind a namespaced callee, which still is.
+    #[test]
+    fn edge_cases_flag_only_the_namespaced_mismatch() {
+        let violations = check_one(RULE, DIR, "edge-cases.js");
+        assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert!(violations[0].message.contains("expects 2 parameter(s)"));
+        assert!(violations[0].message.contains("but found 1"));
     }
 }
 
@@ -245,8 +279,8 @@ mod patterns {
         let discovered = discover_files(&pattern, manifest_dir());
         assert_eq!(
             discovered.files.len(),
-            9,
-            "expected 3 fixtures for each of 3 rules, got {:?}",
+            12,
+            "expected 4 fixtures for each of 3 rules, got {:?}",
             discovered.files
         );
     }

@@ -325,15 +325,19 @@ rather than suppressing anything. Treat 8 as the real number.
 
 ## Fixtures
 
-Each rule has three fixture files under `fixtures/<rule_name>/`:
+Each rule has four fixture files under `fixtures/<rule_name>/`:
 
 | File | Purpose |
 | --- | --- |
 | `valid.js` | Patterns that must **not** be reported |
 | `invalid.js` | Patterns that must be reported, at known line:col |
 | `suppressed.js` | The same violations, silenced by ignore comments |
+| `edge-cases.js` | Documented boundary behavior — gaps in coverage and known quirks, each pinned to an exact violation count |
 
-Running the tool over all fixtures yields 7 errors in 3 files (the three
-`invalid.js` files) — 2 from `no-arrow-function-create-selector`, 2 from
-`no-native-map`, 3 from `reselect-arity-match`. `valid.js` and `suppressed.js`
-contribute nothing. See [TESTING.md](TESTING.md).
+Running the tool over all fixtures yields 12 errors in 6 files — 7 from the
+three `invalid.js` files (2 from `no-arrow-function-create-selector`, 2 from
+`no-native-map`, 3 from `reselect-arity-match`), plus 5 more from the three
+`edge-cases.js` files (3 from `no-native-map`, 1 from
+`no-arrow-function-create-selector`, 1 from `reselect-arity-match`) — each a
+deliberate, documented behavior rather than a bug. `valid.js` and
+`suppressed.js` contribute nothing. See [TESTING.md](TESTING.md).

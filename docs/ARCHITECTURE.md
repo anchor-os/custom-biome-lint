@@ -480,7 +480,7 @@ matching ESLint's behaviour.
 The summary reports file count and wall time on both paths:
 
 ```
-✖ 7 errors in 3 files (9 files checked in 5ms)
+✖ 12 errors in 6 files (12 files checked in 5ms)
 ✔ No violations found (4393 files checked in 2.15s)
 ```
 

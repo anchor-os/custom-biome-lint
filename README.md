@@ -322,12 +322,12 @@ them or loosen the pins** — see
 ## Testing
 
 ```sh
-cargo test                                    # 62 tests: 38 unit + 23 integration + 1 doctest
+cargo test                                    # 92 tests: 64 unit + 27 integration + 1 doctest
 cargo fmt --all -- --check                    # no diff expected
 cargo clippy --all-targets -- -D warnings     # no warnings expected
 cargo audit                                   # no advisories beyond .cargo/audit.toml's ignore list
 cargo deny check                              # licenses, bans, sources all ok
-./target/release/custom-biome-lint fixtures   # 7 errors across 3 files
+./target/release/custom-biome-lint fixtures   # 12 errors across 6 files
 ```
 
 Full procedure, including running against the real dashboard tree and how the

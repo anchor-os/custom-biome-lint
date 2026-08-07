@@ -148,28 +148,41 @@ cargo build --release
 ./target/release/custom-biome-lint fixtures
 ```
 
-Expected output — **7 errors in 3 files**, exit code 1:
+Expected output — **12 errors in 6 files**, exit code 1:
 
 ```
+fixtures/no_arrow_function_create_selector/edge-cases.js
+  20:23  error  Avoid wrapping createSelector in an arrow function for "makeup". ...  no-arrow-function-create-selector
+
 fixtures/no_arrow_function_create_selector/invalid.js
   7:35   error  Avoid wrapping createSelector in an arrow function for "selectVisibleUsers". ...  no-arrow-function-create-selector
   12:32  error  Avoid wrapping createSelector in an arrow function for "selectFirstUser". ...     no-arrow-function-create-selector
 
+fixtures/no_native_map/edge-cases.js
+  7:26   error  Use Immutable.js Map instead of native Map.  no-native-map
+  12:25  error  Use Immutable.js Map instead of native Map.  no-native-map
+  13:14  error  Use Immutable.js Map instead of native Map.  no-native-map
+
 fixtures/no_native_map/invalid.js
   3:26  error  Use Immutable.js Map instead of native Map.  no-native-map
   6:22  error  Use Immutable.js Map instead of native Map.  no-native-map
+
+fixtures/reselect_arity_match/edge-cases.js
+  20:86  error  createSelector expects 2 parameter(s) in the result function, but found 1.  reselect-arity-match
 
 fixtures/reselect_arity_match/invalid.js
   7:77   error  createSelector expects 2 parameter(s) in the result function, but found 1.  reselect-arity-match
   10:64  error  createSelector expects 1 parameter(s) in the result function, but found 2.  reselect-arity-match
   13:76  error  createSelector expects 2 parameter(s) in the result function, but found 1.  reselect-arity-match
 
-✖ 7 errors in 3 files
+✖ 12 errors in 6 files
 ```
 
-Only the three `invalid.js` files appear. If `valid.js` or `suppressed.js` shows
-up, something is broken — either a rule became over-eager or suppression parsing
-regressed.
+`invalid.js` and `edge-cases.js` are the only files that ever appear — each
+`edge-cases.js` violation is a pinned, deliberate count for a documented
+boundary behavior (see [RULES.md](RULES.md)), not a bug. If `valid.js` or
+`suppressed.js` shows up, or the counts drift from the above, something is
+broken — either a rule became over-eager or suppression parsing regressed.
 
 Note this also exercises the bare-directory shorthand: `fixtures` expands to
 `fixtures/**/*.{js,jsx}`.
