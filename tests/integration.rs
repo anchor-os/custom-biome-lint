@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use custom_biome_lint::{lint_source, PackageConfig, Rule, RuleRegistry, Violation};
+use custom_biome_lint::{lint_source, PackageConfig, Rule, RuleRegistry, RuleSeverity, Violation};
 
 fn fixture(rule_dir: &str, name: &str) -> (PathBuf, String) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -184,10 +184,10 @@ mod config {
 
     #[test]
     fn ignored_rules_are_filtered_out() {
-        let config = PackageConfig {
-            ignored_rules: vec!["no-native-map".to_string()],
-            ..PackageConfig::default()
-        };
+        let mut config = PackageConfig::default();
+        config
+            .severities
+            .insert("no-native-map".to_string(), RuleSeverity::Off);
         let registry = RuleRegistry::with_all_rules();
         let enabled: Vec<&str> = registry
             .enabled(&config)
@@ -196,6 +196,25 @@ mod config {
             .collect();
         assert!(!enabled.contains(&"no-native-map"));
         assert_eq!(enabled.len(), registry.len() - 1);
+    }
+
+    #[test]
+    fn warn_severity_does_not_disable_the_rule() {
+        let mut config = PackageConfig::default();
+        config
+            .severities
+            .insert("no-native-map".to_string(), RuleSeverity::Warn);
+        let registry = RuleRegistry::with_all_rules();
+        let enabled: Vec<&str> = registry
+            .enabled(&config)
+            .iter()
+            .map(|rule| rule.name())
+            .collect();
+        assert!(enabled.contains(&"no-native-map"));
+        assert_eq!(
+            config.severity_override("no-native-map"),
+            Some(RuleSeverity::Warn)
+        );
     }
 }
 

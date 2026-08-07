@@ -27,7 +27,7 @@ pub mod suppress;
 pub use analyzer::runner::{analyze_file, AnalyzedFile, FileContext};
 pub use analyzer::{discover_files, resolve_pattern, Discovery, GlobSet};
 pub use cli::{run, CliArgs, OutputFormat, Reporter, VERSION};
-pub use config::PackageConfig;
+pub use config::{PackageConfig, RuleSeverity};
 pub use diagnostics::{format_reports_json, FileReport, Severity, Totals, Violation};
 pub use fixer::{plan_file, FileChange, FilePlan, FixReport, Fixer, Placement, Unfixable};
 pub use rules::{Rule, RuleRegistry};

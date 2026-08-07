@@ -211,8 +211,9 @@ a future TypeScript-only or JSX-only rule needs no special casing.
 
 ## Decision: `ignoreBiomeExtensionRules` in `package.json`
 
-Rules are disabled by name from the nearest `package.json` at or above the
-working directory:
+Rule severities are set by name from the nearest `package.json` at or above the
+working directory. Two shapes are accepted — a legacy array (every entry means
+`"off"`) and an object mapping rule name to `"off"`/`"warn"`/`"error"`:
 
 ```json
 {
@@ -220,30 +221,45 @@ working directory:
 }
 ```
 
+```json
+{
+  "ignoreBiomeExtensionRules": {
+    "no-native-map": "off",
+    "reselect-arity-match": "warn"
+  }
+}
+```
+
 **Why `package.json` rather than a dedicated config file.** The tool is meant to
 sit alongside Biome in a JS project that already has a `package.json`. Adding a
 `.custombiomelintrc` would be one more file for developers to know about, and
-the config is a single array of strings — it does not justify its own file.
+the config is small enough that it does not justify its own file.
 
 **Why the key is named that.** It is namespaced enough not to collide with
 anything npm or Biome uses, and it reads as "rules of the Biome-extension tool
-that should be ignored."
+that should be ignored" — the object form's `"warn"`/`"error"` values are an
+extension of that same key rather than a second, differently-named setting.
 
 **Behaviour.** `PackageConfig::load` walks up from the working directory via
 `Path::ancestors()` and takes the first `package.json` it finds. A missing file
-is **not an error** — the tool simply runs with all rules enabled, which keeps
-it usable outside a JS project (e.g. running it against `fixtures/`). Malformed
-config is reported as a warning on stderr rather than a hard failure, and the
-run continues:
+is **not an error** — the tool simply runs with all rules enabled at their
+default severity, which keeps it usable outside a JS project (e.g. running it
+against `fixtures/`). Malformed config is reported as a warning on stderr
+rather than a hard failure, and the run continues:
 
 - unreadable file -> warning, all rules enabled
 - invalid JSON -> warning, all rules enabled
-- key present but not an array -> warning, key ignored
+- key present but not an array or object -> warning, key ignored
 - array containing a non-string -> warning naming the bad entry, other entries honoured
+- object value that isn't `"off"`/`"warn"`/`"error"` -> warning naming the bad entry, other entries honoured
 
-The registry then exposes `.enabled(&config)` and `.ignored(&config)`; the CLI
-uses the first to drive the run and the second to report what was skipped under
-`-v`.
+`"off"` is handled entirely by `RuleRegistry::enabled`/`::ignored`, which the
+CLI uses to decide which rules run at all and to report what was skipped under
+`-v`. `"warn"`/`"error"` do not change whether a rule runs — they only relabel
+the severity of violations it reports, via `PackageConfig::severity_override`
+applied in the CLI after `check()` returns and before the report is built. A
+`"warn"` violation is still printed and counted, but does not make the run
+exit non-zero the way an `"error"` (the default) does.
 
 ## Module-by-module walkthrough
 

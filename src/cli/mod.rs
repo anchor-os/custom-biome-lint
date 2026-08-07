@@ -14,8 +14,8 @@ pub use output::{Reporter, HELP};
 
 use crate::analyzer::{analyze_file, discover_files, resolve_pattern, GlobSet};
 use crate::cache::CacheManager;
-use crate::config::PackageConfig;
-use crate::diagnostics::{tally, FileReport, Violation};
+use crate::config::{PackageConfig, RuleSeverity};
+use crate::diagnostics::{tally, FileReport, Severity, Violation};
 use crate::fixer::Fixer;
 use crate::rules::RuleRegistry;
 use crate::{dlog, vlog};
@@ -175,10 +175,12 @@ where
     let mut reports = Vec::new();
     let mut to_fix: BTreeMap<PathBuf, Vec<Violation>> = BTreeMap::new();
 
-    for (file, analyzed) in analyzed_files {
+    for (file, mut analyzed) in analyzed_files {
         if !analyzed.parsed_cleanly {
             reporter.warn(&format!("parse errors in {}", file.display()));
         }
+
+        apply_severity_overrides(&mut analyzed.violations, &config);
 
         let source = fs::read_to_string(&file).unwrap_or_default();
         vlog!(
@@ -311,6 +313,19 @@ fn report_pattern_extensions(pattern: &GlobSet, registry: &RuleRegistry, reporte
 
 fn display_path(path: &Path, cwd: &Path) -> PathBuf {
     path.strip_prefix(cwd).unwrap_or(path).to_path_buf()
+}
+
+/// Applies package.json's per-rule "warn"/"error" severity overrides.
+/// "off" never reaches here: `RuleRegistry::enabled` already keeps an
+/// off rule from running at all, so it has no violations to override.
+fn apply_severity_overrides(violations: &mut [Violation], config: &PackageConfig) {
+    for violation in violations {
+        match config.severity_override(violation.rule) {
+            Some(RuleSeverity::Warn) => violation.severity = Severity::Warning,
+            Some(RuleSeverity::Error) => violation.severity = Severity::Error,
+            Some(RuleSeverity::Off) | None => {}
+        }
+    }
 }
 
 /// Compute a hash of all enabled rules to detect rule changes.

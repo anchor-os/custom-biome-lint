@@ -147,8 +147,8 @@ keeps working after an upgrade.
 
 ## Configuration
 
-Rules are disabled by name in the nearest `package.json` at or above the working
-directory:
+Rule severities are set by name in the nearest `package.json` at or above the
+working directory, via `ignoreBiomeExtensionRules`. Two shapes are accepted:
 
 ```json
 {
@@ -156,7 +156,27 @@ directory:
 }
 ```
 
-A missing `package.json` is not an error — every rule stays enabled.
+The array form is shorthand for turning listed rules fully `"off"`. For finer
+control, use the object form with `"off"` / `"warn"` / `"error"` per rule:
+
+```json
+{
+  "ignoreBiomeExtensionRules": {
+    "no-native-map": "off",
+    "reselect-arity-match": "warn"
+  }
+}
+```
+
+`"off"` disables the rule entirely, same as the array form. `"warn"` and
+`"error"` don't change whether the rule runs — only the severity of what it
+reports. `"warn"` violations are still printed and still counted, but (unlike
+`"error"`, the default) they don't make the run exit non-zero, so a rule you
+want visibility into without blocking CI can be turned down without silencing
+it. A rule with no entry keeps its default severity (`"error"`).
+
+A missing `package.json` is not an error — every rule stays enabled at its
+default severity.
 
 ## Suppressions
 

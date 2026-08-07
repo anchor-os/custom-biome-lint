@@ -31,9 +31,14 @@ FLAGS:
     -V, --version      Show version
 
 CONFIGURATION:
-    package.json may disable rules by name:
+    package.json may set rule severities by name:
 
         { \"ignoreBiomeExtensionRules\": [\"no-native-map\"] }
+        { \"ignoreBiomeExtensionRules\": { \"no-native-map\": \"off\",
+                                          \"reselect-arity-match\": \"warn\" } }
+
+    The array form is shorthand for \"off\". The object form also accepts
+    \"warn\" (reported but does not fail the run) and \"error\" (default).
 
 SUPPRESSIONS:
     // biome-ignore-line rule-name[, rule-name2]
