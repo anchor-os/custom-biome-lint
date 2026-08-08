@@ -1,0 +1,70 @@
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# id-token: write is required for npm trusted publishing (OIDC). The publish
+# happens without any NPM_TOKEN secret; npm exchanges the runner's short-lived
+# OIDC token for a publish-scoped credential.
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false # never cache in release builds
+
+      - name: Ensure npm >= 11.5.1 (OIDC support)
+        run: npm install -g npm@latest --force
+
+      # setup-node with registry-url writes `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`.
+      # With no NODE_AUTH_TOKEN secret the placeholder expands to empty, which makes npm treat
+      # auth as configured and skip the OIDC handshake (fails with ENEEDAUTH). Strip the line so
+      # trusted publishing kicks in.
+      - name: Strip empty _authToken from .npmrc
+        run: |
+          npmrc="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
+          sed -i '/_authToken/d' "$npmrc"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Build (release)
+        run: cargo build --release
+
+      - name: Test
+        run: cargo test
+
+      - name: Smoke test against fixtures
+        # fixtures/ deliberately contains violations, so the binary is expected
+        # to exit 1. Any other code means something is actually broken.
+        run: |
+          set +e
+          ./target/release/custom-biome-lint fixtures
+          code=$?
+          set -e
+          if [ "$code" -ne 1 ]; then
+            echo "expected exit code 1 (violations found), got $code"
+            exit 1
+          fi
+
+      - name: Publish to npm
+        run: npm publish --access public --provenance
