@@ -126,7 +126,7 @@ All components are **thread-safe by design**:
 
 | Component | Thread-Safe? | Why |
 |-----------|-------------|-----|
-| `FileContext` | ✓ Yes | Immutable after construction |
+| `FileContext` | ✓ Yes | Confined to one thread per file — `analyze_file()` creates it, uses it, and drops it entirely inside a single `par_iter()` closure; it's never shared or sent across threads. Not itself deeply immutable since the semantic model addition (`semantic: OnceCell<SemanticModel>`, lazily populated on first `FileContext::semantic()` call — see `docs/SEMANTIC_MODEL.md`), but that's irrelevant here precisely because no instance is ever accessed from more than one thread |
 | `JsFileSource` (Rowan AST) | ✓ Yes | Immutable syntax tree |
 | `Rule` trait | ✓ Yes | Implements `Send + Sync` |
 | `Violation` | ✓ Yes | Owned, immutable data |

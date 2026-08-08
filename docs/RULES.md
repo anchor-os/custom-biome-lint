@@ -103,7 +103,10 @@ migration lands, not as part of it.
 
 - **No real scope analysis.** A locally-shadowed `Map` (e.g. a function parameter
   named `Map`) is treated the same as a global. The original rule had the same
-  limitation.
+  limitation. This is deliberate, not an unfixed gap: see
+  [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md#why-no-existing-rule-uses-this-yet) for
+  why the scope/binding model this codebase does have wasn't wired into this
+  rule to "fix" it.
 - **File-level binding state.** If Immutable's `Map` is imported anywhere in the
   file, no bare `Map` is reported anywhere in that file, even in a function that
   genuinely wants the native one.

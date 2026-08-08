@@ -36,7 +36,7 @@ rm -rf target
 Confirm the copy stands alone before going further:
 
 ```sh
-cargo test          # 38 unit + 23 integration + 1 doc-test
+cargo test          # 84 unit + 52 integration + 1 doc-test
 cargo clippy --all-targets
 cargo build --release
 ./target/release/custom-biome-lint fixtures
