@@ -90,5 +90,7 @@ jobs:
             exit 1
           fi
 
+      # --loglevel verbose surfaces the OIDC exchange result (npm logs it only
+      # at verbose level and otherwise swallows it into a bare ENEEDAUTH).
       - name: Publish to npm
-        run: npm publish --access public --provenance
+        run: npm publish --access public --provenance --loglevel verbose
