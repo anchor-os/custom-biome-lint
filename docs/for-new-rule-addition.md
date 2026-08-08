@@ -34,7 +34,7 @@ All of the following must be true before you claim the task is done:
 
 | Gate | Command | Expected |
 | --- | --- | --- |
-| Tests pass | `cargo test` | 38 unit + 23 integration + 1 doc-test pass **before** your change; your new tests are additive |
+| Tests pass | `cargo test` | 84 unit + 52 integration + 1 doc-test pass **before** your change; your new tests are additive |
 | No lint warnings | `cargo clippy --all-targets` | zero warnings |
 | Release builds | `cargo build --release` | succeeds |
 | Fixtures behave | `./target/release/custom-biome-lint fixtures` | your rule reports `invalid.js`, stays silent on `valid.js` and `suppressed.js` |
@@ -76,6 +76,14 @@ file.line_col(offset)  // byte offset -> (1-based line, 1-based col)
 file.source()          // &str — original text
 file.path()            // &Path — file being linted
 file.parsed_cleanly()  // bool — did parsing produce errors
+file.semantic()        // &SemanticModel — lexical scopes/bindings, built lazily on
+                        // first call. Only reach for this if your rule genuinely
+                        // needs identifier resolution (e.g. "does this call refer
+                        // to a particular import, or a same-named local?"); see
+                        // SEMANTIC_MODEL.md. None of the three existing rules use
+                        // it — they're exact ESLint-parity ports, where matching
+                        // by name/shape alone is the deliberate, documented
+                        // behavior, not a gap to close with real resolution.
 ```
 
 ### The three existing rules, and what each teaches
@@ -585,3 +593,4 @@ limitations" in [RULES.md](RULES.md).
 | Existing rules, examples, limitations | [RULES.md](RULES.md) |
 | Test layout and verbosity flags | [TESTING.md](TESTING.md) |
 | Build and toolchain setup | [SETUP.md](SETUP.md) |
+| Lexical scope/binding model and identifier resolution | [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md) |
