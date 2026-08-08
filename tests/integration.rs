@@ -434,3 +434,325 @@ mod cli_behavior {
         assert!(!output.status.success());
     }
 }
+
+mod semantic_model {
+    use super::*;
+    use biome_js_syntax::JsReferenceIdentifier;
+    use biome_rowan::AstNode;
+    use custom_biome_lint::{BindingKind, FileContext, ImportedName, ScopeKind};
+
+    fn parse(source: &'static str) -> FileContext<'static> {
+        FileContext::parse(source, Path::new("a.js"))
+    }
+
+    /// The `n`th (0-based, in source order) reference to `name` -- i.e. a
+    /// *use* of the identifier, not a declaration of it.
+    fn nth_reference(file: &FileContext<'_>, name: &str, n: usize) -> JsReferenceIdentifier {
+        file.tree()
+            .descendants()
+            .filter_map(JsReferenceIdentifier::cast)
+            .filter(|ident| {
+                ident
+                    .value_token()
+                    .is_ok_and(|token| token.text_trimmed() == name)
+            })
+            .nth(n)
+            .unwrap_or_else(|| panic!("no occurrence #{n} of reference `{name}` in source"))
+    }
+
+    #[test]
+    fn basic_declarations_are_all_resolvable() {
+        let file = parse(
+            "const foo = 1;\nlet bar = 2;\nvar baz = 3;\nfunction quux() {}\nclass Corge {}\nfoo; bar; baz; quux; Corge;\n",
+        );
+        let model = file.semantic();
+
+        let cases = [
+            ("foo", BindingKind::Const),
+            ("bar", BindingKind::Let),
+            ("baz", BindingKind::Var),
+            ("quux", BindingKind::Function),
+            ("Corge", BindingKind::Class),
+        ];
+        for (name, expected_kind) in cases {
+            let reference = nth_reference(&file, name, 0);
+            let binding = model
+                .resolve(&reference)
+                .unwrap_or_else(|| panic!("{name} did not resolve"));
+            assert_eq!(binding.name, name);
+            assert_eq!(binding.kind, expected_kind, "wrong kind for {name}");
+        }
+    }
+
+    #[test]
+    fn a_function_parameter_resolves_to_itself() {
+        let file = parse("function test(foo) {\n    foo();\n}\n");
+        let model = file.semantic();
+
+        let reference = nth_reference(&file, "foo", 0);
+        let binding = model.resolve(&reference).expect("foo should resolve");
+        assert_eq!(binding.kind, BindingKind::Parameter);
+        let (line, _) = file.line_col(binding.declared_at);
+        assert_eq!(line, 1, "parameter foo is declared on line 1");
+    }
+
+    #[test]
+    fn nested_scopes_each_shadow_the_next_one_out() {
+        let file = parse(
+            "const foo = 1;\n\nfunction test() {\n    const foo = 2;\n\n    {\n        const foo = 3;\n        use(foo);\n    }\n\n    use(foo);\n}\n",
+        );
+        let model = file.semantic();
+
+        // The reference inside the block resolves to the innermost `foo`
+        // (declared on line 7), the one after the block to the function's
+        // own `foo` (line 4) -- neither ever sees the module-level one.
+        let inner = nth_reference(&file, "foo", 0);
+        let inner_binding = model.resolve(&inner).unwrap();
+        assert_eq!(file.line_col(inner_binding.declared_at).0, 7);
+
+        let outer = nth_reference(&file, "foo", 1);
+        let outer_binding = model.resolve(&outer).unwrap();
+        assert_eq!(file.line_col(outer_binding.declared_at).0, 4);
+    }
+
+    #[test]
+    fn nearest_lexical_binding_wins_over_an_outer_one() {
+        let file = parse(
+            "const foo = 1;\n\nfunction test() {\n    const foo = 2;\n    console.log(foo);\n}\n",
+        );
+        let model = file.semantic();
+
+        let reference = nth_reference(&file, "foo", 0);
+        let binding = model.resolve(&reference).unwrap();
+        assert_eq!(file.line_col(binding.declared_at).0, 4);
+    }
+
+    #[test]
+    fn default_import_is_tracked() {
+        let file = parse("import foo from \"module\";\nfoo;\n");
+        let model = file.semantic();
+
+        let reference = nth_reference(&file, "foo", 0);
+        let binding = model.resolve(&reference).unwrap();
+        let import = binding.import().expect("foo is an import");
+        assert_eq!(import.source, "module");
+        assert_eq!(import.imported, ImportedName::Default);
+        assert_eq!(import.local, "foo");
+    }
+
+    #[test]
+    fn named_import_is_tracked() {
+        let file = parse("import { foo } from \"module\";\nfoo;\n");
+        let model = file.semantic();
+
+        let reference = nth_reference(&file, "foo", 0);
+        let binding = model.resolve(&reference).unwrap();
+        let import = binding.import().unwrap();
+        assert_eq!(import.source, "module");
+        assert_eq!(import.imported, ImportedName::Named("foo".to_string()));
+        assert_eq!(import.local, "foo");
+    }
+
+    #[test]
+    fn aliased_named_import_keeps_both_names_distinct() {
+        let file = parse("import { createSelector as selector } from \"reselect\";\nselector();\n");
+        let model = file.semantic();
+
+        let reference = nth_reference(&file, "selector", 0);
+        let binding = model.resolve(&reference).unwrap();
+        let import = binding.import().unwrap();
+        assert_eq!(import.source, "reselect");
+        assert_eq!(
+            import.imported,
+            ImportedName::Named("createSelector".to_string())
+        );
+        assert_eq!(import.local, "selector");
+    }
+
+    #[test]
+    fn namespace_import_is_tracked() {
+        let file = parse("import * as foo from \"module\";\nfoo.bar();\n");
+        let model = file.semantic();
+
+        let reference = nth_reference(&file, "foo", 0);
+        let binding = model.resolve(&reference).unwrap();
+        let import = binding.import().unwrap();
+        assert_eq!(import.source, "module");
+        assert_eq!(import.imported, ImportedName::Namespace);
+        assert_eq!(import.local, "foo");
+    }
+
+    #[test]
+    fn a_parameter_shadows_an_imported_name_of_the_same_name() {
+        // The parameter must win -- the call inside test() must NOT resolve
+        // to the module-level import.
+        let file = parse(
+            "import { createSelector } from \"reselect\";\n\nfunction test(createSelector) {\n    return createSelector(a, b);\n}\n",
+        );
+        let model = file.semantic();
+
+        let reference = nth_reference(&file, "createSelector", 0);
+        let binding = model.resolve(&reference).unwrap();
+        assert_eq!(binding.kind, BindingKind::Parameter);
+        assert!(
+            binding.import().is_none(),
+            "must resolve to the parameter, not the import"
+        );
+    }
+
+    #[test]
+    fn a_local_redeclaration_shadows_an_import_of_the_same_name() {
+        let file = parse(
+            "import { Map } from \"immutable\";\n\nfunction test() {\n    const Map = CustomMap;\n    return new Map();\n}\n",
+        );
+        let model = file.semantic();
+
+        // `Map` in `import { Map }` and in `const Map = ...` are both
+        // bindings, not references -- the only actual reference to `Map`
+        // is in `new Map()`.
+        let reference = nth_reference(&file, "Map", 0);
+        let binding = model.resolve(&reference).unwrap();
+        assert_eq!(binding.kind, BindingKind::Const);
+        assert!(
+            binding.import().is_none(),
+            "must resolve to the local const, not the import"
+        );
+        assert_eq!(file.line_col(binding.declared_at).0, 4);
+    }
+
+    #[test]
+    fn object_destructuring_binds_every_name() {
+        let file = parse("const { foo } = obj;\nconst { foo: bar } = obj;\nfoo; bar;\n");
+        let model = file.semantic();
+
+        let foo = model.resolve(&nth_reference(&file, "foo", 0)).unwrap();
+        assert_eq!(foo.kind, BindingKind::Const);
+        let bar = model.resolve(&nth_reference(&file, "bar", 0)).unwrap();
+        assert_eq!(bar.kind, BindingKind::Const);
+    }
+
+    #[test]
+    fn array_destructuring_binds_every_name() {
+        let file = parse("const [foo] = values;\nfoo;\n");
+        let model = file.semantic();
+
+        let binding = model.resolve(&nth_reference(&file, "foo", 0)).unwrap();
+        assert_eq!(binding.kind, BindingKind::Const);
+    }
+
+    #[test]
+    fn a_computed_destructuring_key_is_a_reference() {
+        let file = parse("const key = \"foo\";\nconst { [key]: value } = obj;\nvalue;\n");
+        let model = file.semantic();
+
+        // `key` inside `[key]` must resolve to the outer `const key`, not be
+        // silently dropped because the property's key expression was never
+        // walked for references.
+        let key_reference = nth_reference(&file, "key", 0);
+        let key_binding = model
+            .resolve(&key_reference)
+            .expect("computed key must be resolvable");
+        assert_eq!(key_binding.kind, BindingKind::Const);
+
+        let value_binding = model.resolve(&nth_reference(&file, "value", 0)).unwrap();
+        assert_eq!(value_binding.kind, BindingKind::Const);
+    }
+
+    #[test]
+    fn arrow_function_parameter_is_bound() {
+        let file = parse("const test = foo => foo;\n");
+        let model = file.semantic();
+
+        let binding = model.resolve(&nth_reference(&file, "foo", 0)).unwrap();
+        assert_eq!(binding.kind, BindingKind::Parameter);
+    }
+
+    #[test]
+    fn block_scope_shadows_then_restores_the_outer_binding() {
+        let file =
+            parse("const foo = 1;\n\n{\n    const foo = 2;\n    use(foo);\n}\n\nuse(foo);\n");
+        let model = file.semantic();
+
+        let inner = model.resolve(&nth_reference(&file, "foo", 0)).unwrap();
+        assert_eq!(file.line_col(inner.declared_at).0, 4);
+
+        let outer = model.resolve(&nth_reference(&file, "foo", 1)).unwrap();
+        assert_eq!(file.line_col(outer.declared_at).0, 1);
+    }
+
+    #[test]
+    fn catch_scope_binds_the_caught_error() {
+        let file = parse("try {\n} catch (error) {\n    console.log(error);\n}\n");
+        let model = file.semantic();
+
+        let binding = model.resolve(&nth_reference(&file, "error", 0)).unwrap();
+        assert_eq!(binding.kind, BindingKind::CatchParameter);
+    }
+
+    #[test]
+    fn a_var_hoists_out_of_a_nested_block_to_the_function_scope() {
+        let file =
+            parse("function test() {\n    {\n        var foo = 1;\n    }\n    use(foo);\n}\n");
+        let model = file.semantic();
+
+        let binding = model.resolve(&nth_reference(&file, "foo", 0)).unwrap();
+        assert_eq!(binding.kind, BindingKind::Var);
+        // The var's binding lives in the function scope, not the block it
+        // was textually declared in.
+        let function_scope = binding.scope;
+        assert_eq!(model.scope(function_scope).kind(), ScopeKind::Function);
+    }
+
+    #[test]
+    fn a_let_in_a_for_loop_head_is_scoped_to_the_loop() {
+        let file = parse("for (let i = 0; i < 10; i++) {\n    use(i);\n}\n");
+        let model = file.semantic();
+
+        let binding = model.resolve(&nth_reference(&file, "i", 0)).unwrap();
+        assert_eq!(binding.kind, BindingKind::Let);
+        assert_eq!(model.scope(binding.scope).kind(), ScopeKind::Loop);
+    }
+
+    #[test]
+    fn a_switch_statement_shares_one_block_scope_across_every_case() {
+        let file = parse(
+            "function test(x) {\n    switch (x) {\n        case 1: {\n            const foo = 1;\n            use(foo);\n            break;\n        }\n        case 2:\n            let bar = 2;\n            use(bar);\n            break;\n    }\n}\n",
+        );
+        let model = file.semantic();
+
+        // `bar`, declared directly in a case body (no braces around it), is
+        // scoped to the whole switch -- not the enclosing function -- per
+        // real JS semantics.
+        let bar = model.resolve(&nth_reference(&file, "bar", 0)).unwrap();
+        assert_eq!(bar.kind, BindingKind::Let);
+        assert_eq!(model.scope(bar.scope).kind(), ScopeKind::Block);
+
+        // `foo`, inside its own `{ }` case block, gets a nested block scope
+        // as usual, one level further in than the switch's own scope.
+        let foo = model.resolve(&nth_reference(&file, "foo", 0)).unwrap();
+        assert_eq!(foo.kind, BindingKind::Const);
+        assert_eq!(model.scope(foo.scope).kind(), ScopeKind::Block);
+        assert_eq!(model.scope(foo.scope).parent(), Some(bar.scope));
+    }
+
+    #[test]
+    fn scopes_form_the_expected_parent_chain() {
+        let file = parse("function test() {\n    const foo = 1;\n    foo;\n}\n");
+        let model = file.semantic();
+
+        // `test` itself is declared in the global scope.
+        let test_binding = model
+            .scope(model.global_scope())
+            .binding("test")
+            .map(|id| model.binding(id))
+            .expect("function declaration `test` is bound in the global scope");
+        assert_eq!(test_binding.kind, BindingKind::Function);
+
+        // `foo`, declared inside `test`, lives in a function scope whose
+        // parent is the global scope.
+        let foo_binding = model.resolve(&nth_reference(&file, "foo", 0)).unwrap();
+        let function_scope = model.scope(foo_binding.scope);
+        assert_eq!(function_scope.kind(), ScopeKind::Function);
+        assert_eq!(function_scope.parent(), Some(model.global_scope()));
+    }
+}

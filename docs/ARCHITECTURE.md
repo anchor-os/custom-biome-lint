@@ -78,6 +78,7 @@ same tree and the same line index.
 | `source: &str` | Original text, still reachable |
 | `path: &Path` | File path, still reachable |
 | `parsed_cleanly: bool` | Whether the parse produced errors |
+| `semantic: OnceCell<SemanticModel>` | Lexical scope/binding model, built lazily on first `semantic()` call — see "The semantic model" below |
 
 ### What it costs
 
@@ -276,6 +277,31 @@ this run rather than applied on top of a stale offset, which would corrupt the
 file. This can only happen across rules today, since no single rule in this
 codebase produces more than one violation covering the same range.
 
+## The semantic model: lexical scopes and identifier resolution
+
+`src/semantic/` (re-exported as `SemanticModel`, `Scope`, `Binding`,
+`BindingKind`, `ImportBinding`) is a lightweight, single-file, syntax-only
+model of lexical scopes, declarations, and identifier resolution — "what
+does this identifier refer to, right here?" Full design, the scope/binding
+kinds, how it's built, and its explicit non-goals (no types, no
+control/data-flow analysis, no cross-file resolution) are in
+[SEMANTIC_MODEL.md](SEMANTIC_MODEL.md).
+
+Two points worth having here rather than only there:
+
+- **It is lazy and shared, not eager.** `FileContext::semantic()` builds it
+  on first call via `OnceCell` and caches it for the rest of that
+  `FileContext`'s life, so it costs nothing for a rule that never asks for
+  it, and costs exactly once (not once per rule) for a file where multiple
+  rules do.
+- **No existing rule uses it yet, deliberately.** All three current rules
+  are exact ESLint-parity ports; the one case where semantic resolution
+  would change a rule's output (`no-native-map`'s shadowed-`Map`-parameter
+  handling) is a case where the *current* behavior is the documented,
+  intentional parity target — see SEMANTIC_MODEL.md's "Why no existing rule
+  uses this yet" for the specifics. This is infrastructure for a future rule
+  that isn't an ESLint port, not a retrofit for the current three.
+
 ## Decision: `ignoreBiomeExtensionRules` in `package.json`
 
 Rule severities are set by name from the nearest `package.json` at or above the
@@ -427,6 +453,21 @@ are sorted by `(line, col, rule)` before being returned, so output ordering is
 deterministic regardless of the order rules are registered in. The parser is
 always invoked with `JsFileSource::jsx()`, because this codebase has JSX inside
 plain `.js` files and JSX is a superset of the syntax that plain JS files use.
+
+### `src/semantic/`
+
+| File | Role |
+| --- | --- |
+| `mod.rs` | `SemanticModel` — `resolve`, `resolve_in`, scope/binding accessors |
+| `scope.rs` | `Scope`, `ScopeId`, `ScopeKind` |
+| `binding.rs` | `Binding`, `BindingId`, `BindingKind`, `ImportBinding`, `ImportedName` |
+| `builder.rs` | The single recursive tree walk that builds the above |
+
+See "The semantic model" above and [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md) for
+the full design. In short: one syntax-kind-dispatched recursive walk builds
+every scope and binding, references are recorded (not resolved) during that
+walk, and resolution runs once as a second pass afterward so a reference to a
+binding declared later in the same scope still resolves correctly.
 
 ### `src/rules/`
 

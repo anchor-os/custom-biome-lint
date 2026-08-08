@@ -23,6 +23,7 @@ pub mod config;
 pub mod diagnostics;
 pub mod fixer;
 pub mod rules;
+pub mod semantic;
 pub mod suppress;
 
 pub use analyzer::runner::{analyze_file, AnalyzedFile, FileContext};
@@ -33,6 +34,10 @@ pub use config::{PackageConfig, RuleSeverity};
 pub use diagnostics::{format_reports_json, FileReport, Fix, Severity, Totals, Violation};
 pub use fixer::{plan_file, FileChange, FilePlan, FixReport, Fixer, Placement, Unfixable};
 pub use rules::{Rule, RuleRegistry};
+pub use semantic::{
+    Binding, BindingId, BindingKind, ImportBinding, ImportedName, Scope, ScopeId, ScopeKind,
+    SemanticModel,
+};
 pub use suppress::{find_suppression_comments, SuppressionComment, Suppressions};
 
 use std::path::Path;

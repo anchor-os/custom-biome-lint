@@ -34,6 +34,7 @@ including one known false-positive class, are in [docs/RULES.md](docs/RULES.md).
 | [docs/MIGRATION_NOTES.md](docs/MIGRATION_NOTES.md) | The 8 suppression comments still to translate |
 | [docs/INCREMENTAL_CACHING_DOCUMENT.md](docs/INCREMENTAL_CACHING_DOCUMENT.md) | How the content-hash cache works, and why it replaced mtime |
 | [docs/BENCHMARKING.md](docs/BENCHMARKING.md) | Re-runnable performance harness (`scripts/benchmark.sh`) and current numbers |
+| [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md) | Lexical scope/binding model and identifier resolution: design, limitations, why no rule uses it yet |
 
 ## Build
 
@@ -325,6 +326,7 @@ src/
   cli/                       arg parsing, help, verbosity-gated logging
   config/                    package.json ignore list
   analyzer/                  file discovery, glob matching, single-pass runner
+  semantic/                  lexical scope/binding model, identifier resolution
   rules/                     Rule trait, registry, one module per rule
   suppress/                  biome-ignore-line / -next-line parsing
   fixer.rs                   --write-fix: safe suppression-comment placement
@@ -357,7 +359,7 @@ them or loosen the pins** — see
 ## Testing
 
 ```sh
-cargo test                                    # 117 tests: 84 unit + 32 integration + 1 doctest
+cargo test                                    # 137 tests: 84 unit + 52 integration + 1 doctest
 cargo fmt --all -- --check                    # no diff expected
 cargo clippy --all-targets -- -D warnings     # no warnings expected
 cargo audit                                   # no advisories beyond .cargo/audit.toml's ignore list
