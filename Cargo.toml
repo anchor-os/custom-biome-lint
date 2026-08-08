@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Standalone linting tool for Reselect/Redux patterns not in Biome"
 license = "MIT"
-repository = "https://github.com/anchor/custom-biome-lint"
+repository = "https://github.com/anchor-os/custom-biome-lint"
 readme = "README.md"
 
 [lib]

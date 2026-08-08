@@ -146,7 +146,7 @@ reference in [PACKAGE_JSON_SETUP.md](PACKAGE_JSON_SETUP.md).
 the recommended rollout order, and how to make a rule non-blocking while you
 observe it. Read it — this section only covers what an *external* tool adds.
 
-The dashboard's `.gitlab-ci.yml` uses `image: node:24.11.0` with a `lint` job that
+The dashboard's `.gitlab-ci.yml` uses `image: node:26.4.0` with a `lint` job that
 runs `yarn eslint && yarn prettier:check`. Since the image has no Rust, add a
 dedicated job rather than bolting cargo onto the Node one:
 

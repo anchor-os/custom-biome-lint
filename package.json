@@ -25,5 +25,13 @@
     "redux",
     "immutable"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anchor-os/custom-biome-lint.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "license": "MIT"
 }

@@ -143,7 +143,7 @@ build:
 
 publish-npm:
   stage: publish
-  image: node:24
+  image: node:26.4.0
   script:
     # Fail early if the two version numbers have drifted apart.
     - test "$(node -p "require('./package.json').version")" = "$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
