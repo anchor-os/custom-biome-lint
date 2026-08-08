@@ -115,15 +115,73 @@ mod no_native_map {
     }
 
     /// Locks in two documented, deliberate quirks (see RULES.md): the
-    /// mapboxgl.Map false positive, and the lack of real scope analysis for
-    /// a shadowed `Map` parameter (flagged at both its declaration and use).
+    /// mapboxgl.Map false positive, and that a shadowed `Map` parameter's
+    /// own declaration is never flagged even though its use still resolves
+    /// to native Map (there is nothing for it to shadow in this file).
     #[test]
     fn edge_cases_produce_exactly_the_documented_violations() {
         let violations = check_one("no-native-map", "no_native_map", "edge-cases.js");
-        assert_eq!(violations.len(), 3, "got {violations:?}");
+        assert_eq!(violations.len(), 2, "got {violations:?}");
         assert!(violations
             .iter()
             .all(|v| v.rule == "no-native-map" && v.message.contains("Immutable.js Map")));
+    }
+
+    #[test]
+    fn a_parameter_shadowing_a_real_immutable_import_is_reported_as_native() {
+        // The exact case the semantic migration fixes: without scope
+        // awareness, an import of Immutable's Map anywhere in the file used
+        // to suppress every bare `Map` reference in the whole file,
+        // including this one -- a false negative, since `new Map()` here
+        // plainly means the parameter, not the import.
+        let source =
+            "import { Map } from 'immutable';\n\nfunction test(Map) {\n  return new Map();\n}\n";
+        let violations = check_source("no-native-map", source, Path::new("a.js"));
+        assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert_eq!(violations[0].line, 4, "flags the use, not the parameter");
+    }
+
+    #[test]
+    fn a_default_import_alias_is_recognized() {
+        let source = "import Immutable from 'immutable';\nconst m = new Immutable.Map();\n";
+        assert!(check_source("no-native-map", source, Path::new("a.js")).is_empty());
+    }
+
+    #[test]
+    fn destructuring_directly_off_a_require_call_is_recognized() {
+        let source = "const { Map } = require('immutable');\nconst m = new Map();\n";
+        assert!(check_source("no-native-map", source, Path::new("a.js")).is_empty());
+    }
+
+    #[test]
+    fn member_access_directly_off_a_require_call_is_recognized() {
+        let source = "const M = require('immutable').Map;\nconst m = new M();\n";
+        assert!(check_source("no-native-map", source, Path::new("a.js")).is_empty());
+    }
+
+    #[test]
+    fn an_aliased_named_import_is_recognized() {
+        let source =
+            "import { Map as ImmutableMap } from 'immutable';\nconst m = new ImmutableMap();\n";
+        assert!(check_source("no-native-map", source, Path::new("a.js")).is_empty());
+    }
+
+    #[test]
+    fn nested_block_shadowing_is_resolved_independently_per_reference() {
+        let source = "import { Map } from 'immutable';\n\nfunction test() {\n  {\n    const Map = CustomMap;\n    new Map();\n  }\n\n  new Map();\n}\n";
+        let violations = check_source("no-native-map", source, Path::new("a.js"));
+        // The block-scoped `new Map()` resolves to the local `CustomMap`
+        // alias, not the import, so it's native; the one after the block
+        // resolves back to the import, so it's clean.
+        assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert_eq!(violations[0].line, 6);
+    }
+
+    #[test]
+    fn a_local_map_unrelated_to_immutable_is_still_reported() {
+        let source = "const Map = require('some-other-thing');\nnew Map();\n";
+        let violations = check_source("no-native-map", source, Path::new("a.js"));
+        assert_eq!(violations.len(), 1, "got {violations:?}");
     }
 }
 
@@ -157,7 +215,7 @@ mod no_arrow_function_create_selector {
     /// left unfixed for a human to look at.
     #[test]
     fn async_wrapper_is_reported_but_left_unfixed() {
-        let source = "const selectAll = async () => createSelector(a, b);\n";
+        let source = "import { createSelector } from 'reselect';\nconst selectAll = async () => createSelector(a, b);\n";
         let violations = check_source(RULE, source, Path::new("a.js"));
         assert_eq!(violations.len(), 1, "got {violations:?}");
         assert!(violations[0].message.contains("breaks memoization"));
@@ -182,6 +240,33 @@ mod no_arrow_function_create_selector {
         let violations = check_one(RULE, DIR, "edge-cases.js");
         assert_eq!(violations.len(), 1, "got {violations:?}");
         assert!(violations[0].message.contains("\"makeup\""));
+    }
+
+    #[test]
+    fn an_aliased_reselect_import_is_recognized() {
+        let source = "import { createSelector as selector } from 'reselect';\nconst foo = () => selector(a, b);\n";
+        let violations = check_source(RULE, source, Path::new("a.js"));
+        assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert!(violations[0].fix.is_some(), "aliased form still gets a fix");
+    }
+
+    #[test]
+    fn a_same_named_local_function_is_not_reselect() {
+        let source = "function createSelector() {}\nconst selector = () => createSelector(a, b);\n";
+        assert!(check_source(RULE, source, Path::new("a.js")).is_empty());
+    }
+
+    #[test]
+    fn a_createselector_from_a_different_module_is_not_reselect() {
+        let source =
+            "import { createSelector } from 'some-other-library';\nconst selector = () => createSelector(a, b);\n";
+        assert!(check_source(RULE, source, Path::new("a.js")).is_empty());
+    }
+
+    #[test]
+    fn a_function_parameter_shadowing_the_import_is_not_reselect() {
+        let source = "import { createSelector } from 'reselect';\n\nfunction test(createSelector) {\n    const selector = () => createSelector(a, b);\n    return selector;\n}\n";
+        assert!(check_source(RULE, source, Path::new("a.js")).is_empty());
     }
 }
 
@@ -224,6 +309,32 @@ mod reselect_arity_match {
         assert_eq!(violations.len(), 1, "got {violations:?}");
         assert!(violations[0].message.contains("expects 2 parameter(s)"));
         assert!(violations[0].message.contains("but found 1"));
+    }
+
+    #[test]
+    fn an_aliased_reselect_import_is_checked() {
+        let source =
+            "import { createSelector as selector } from 'reselect';\nselector(a, b, x => x);\n";
+        assert_eq!(check_source(RULE, source, Path::new("a.js")).len(), 1);
+    }
+
+    #[test]
+    fn a_same_named_local_function_is_not_reselect() {
+        let source = "function createSelector() {}\ncreateSelector(a, b, x => x);\n";
+        assert!(check_source(RULE, source, Path::new("a.js")).is_empty());
+    }
+
+    #[test]
+    fn a_createselector_from_a_different_module_is_not_reselect() {
+        let source =
+            "import { createSelector } from 'other-library';\ncreateSelector(a, b, x => x);\n";
+        assert!(check_source(RULE, source, Path::new("a.js")).is_empty());
+    }
+
+    #[test]
+    fn a_function_parameter_shadowing_the_import_is_not_reselect() {
+        let source = "import { createSelector } from 'reselect';\n\nfunction test(createSelector) {\n    createSelector(a, b, x => x);\n}\n";
+        assert!(check_source(RULE, source, Path::new("a.js")).is_empty());
     }
 }
 
@@ -373,7 +484,7 @@ mod cli_behavior {
         let tmpdir = TempDir::new().unwrap();
         fs::write(
             tmpdir.path().join("sample.js"),
-            "const selectAll = () => createSelector(a, b);\n",
+            "import { createSelector } from 'reselect';\nconst selectAll = () => createSelector(a, b);\n",
         )
         .unwrap();
 
@@ -387,7 +498,10 @@ mod cli_behavior {
         assert!(fix.status.success(), "{:?}", fix);
 
         let rewritten = fs::read_to_string(tmpdir.path().join("sample.js")).unwrap();
-        assert_eq!(rewritten, "const selectAll = createSelector(a, b);\n");
+        assert_eq!(
+            rewritten,
+            "import { createSelector } from 'reselect';\nconst selectAll = createSelector(a, b);\n"
+        );
 
         let relint = Command::new(env!("CARGO_BIN_EXE_custom-biome-lint"))
             .arg(".")
@@ -405,7 +519,7 @@ mod cli_behavior {
     #[test]
     fn auto_fix_dry_run_leaves_the_file_untouched() {
         let tmpdir = TempDir::new().unwrap();
-        let source = "const selectAll = () => createSelector(a, b);\n";
+        let source = "import { createSelector } from 'reselect';\nconst selectAll = () => createSelector(a, b);\n";
         fs::write(tmpdir.path().join("sample.js"), source).unwrap();
 
         let output = Command::new(env!("CARGO_BIN_EXE_custom-biome-lint"))

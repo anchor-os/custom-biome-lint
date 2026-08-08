@@ -294,13 +294,15 @@ Two points worth having here rather than only there:
   `FileContext`'s life, so it costs nothing for a rule that never asks for
   it, and costs exactly once (not once per rule) for a file where multiple
   rules do.
-- **No existing rule uses it yet, deliberately.** All three current rules
-  are exact ESLint-parity ports; the one case where semantic resolution
-  would change a rule's output (`no-native-map`'s shadowed-`Map`-parameter
-  handling) is a case where the *current* behavior is the documented,
-  intentional parity target — see SEMANTIC_MODEL.md's "Why no existing rule
-  uses this yet" for the specifics. This is infrastructure for a future rule
-  that isn't an ESLint port, not a retrofit for the current three.
+- **All three current rules use it.** `no-native-map` resolves `Map`
+  references against it instead of a bespoke file-wide binding-state
+  machine; `no-arrow-function-create-selector` and `reselect-arity-match`
+  resolve a bare `createSelector` callee against it. This was a deliberate,
+  separately-considered migration, not the model's original intent — it
+  first shipped as unused infrastructure specifically *because* using it
+  meant deviating from strict ESLint-output parity on rules built to
+  guarantee that parity. See SEMANTIC_MODEL.md's "Migrating the existing
+  rules" for the full reasoning and exactly what changed.
 
 ## Decision: `ignoreBiomeExtensionRules` in `package.json`
 
@@ -475,9 +477,10 @@ binding declared later in the same scope still resolves correctly.
 | --- | --- |
 | `rule.rs` (27 lines) | The `Rule` trait |
 | `registry.rs` | `RuleRegistry` — the list of all rules, plus config filtering |
-| `no_native_map.rs` (298 lines) | Immutable.js `Map` rule |
-| `no_arrow_function_create_selector.rs` (120 lines) | Memoization rule |
-| `reselect_arity_match.rs` (115 lines) | Arity rule |
+| `no_native_map.rs` (324 lines) | Immutable.js `Map` rule |
+| `no_arrow_function_create_selector.rs` (144 lines) | Memoization rule |
+| `reselect_arity_match.rs` (127 lines) | Arity rule |
+| `reselect.rs` | Shared "does this resolve to reselect's `createSelector`" check |
 | `mod.rs` | Re-exports, `JS_EXTENSIONS` constant |
 
 The trait is `Send + Sync` so a future parallel implementation over files needs
@@ -490,13 +493,20 @@ registry is the union across rules, and `default_pattern()` derives
 no `default_pattern()`, since the CLI's default glob is a property of the whole
 registered rule set, not of any single rule.
 
-`no_native_map.rs` is by far the largest rule because it is the only stateful
-one: it must track how `immutable` entered the file (default import, named
-import, `require`, destructuring, namespace alias) before it can decide whether
-a bare `Map` is native. It relies on `descendants()` being preorder, so a
-declaration is seen before the identifiers inside it — the same order the
-original ESLint rule's visitors fire in. See [RULES.md](RULES.md) for the
-detection details and the known false-positive class.
+`no_native_map.rs` is by far the largest rule because it resolves the most
+import/alias forms against `file.semantic()`: named, default, and namespace
+imports, plus `require('immutable')` and locals derived from any of those via
+destructuring or member access. A single forward pass over
+`declarators()` builds two small `HashSet<usize>`s of binding-declaration
+offsets — which bindings represent the whole `immutable` module, and which
+represent its `Map` export — using semantic resolution rather than an ad hoc
+scan; every `Map` reference in the file is then checked against those sets
+independently, so shadowing (a parameter or local named `Map`) resolves
+correctly instead of being masked by a single file-wide flag. See
+[RULES.md](RULES.md) for the detection details, the known false-positive
+class, and [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md#migrating-the-existing-rules)
+for why this replaced the rule's original bespoke `ImmutableBindings` state
+machine.
 
 ### `src/suppress/`
 

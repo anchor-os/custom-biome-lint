@@ -34,7 +34,7 @@ All of the following must be true before you claim the task is done:
 
 | Gate | Command | Expected |
 | --- | --- | --- |
-| Tests pass | `cargo test` | 84 unit + 52 integration + 1 doc-test pass **before** your change; your new tests are additive |
+| Tests pass | `cargo test` | 84 unit + 67 integration + 1 doc-test pass **before** your change; your new tests are additive |
 | No lint warnings | `cargo clippy --all-targets` | zero warnings |
 | Release builds | `cargo build --release` | succeeds |
 | Fixtures behave | `./target/release/custom-biome-lint fixtures` | your rule reports `invalid.js`, stays silent on `valid.js` and `suppressed.js` |
@@ -77,22 +77,27 @@ file.source()          // &str — original text
 file.path()            // &Path — file being linted
 file.parsed_cleanly()  // bool — did parsing produce errors
 file.semantic()        // &SemanticModel — lexical scopes/bindings, built lazily on
-                        // first call. Only reach for this if your rule genuinely
-                        // needs identifier resolution (e.g. "does this call refer
-                        // to a particular import, or a same-named local?"); see
-                        // SEMANTIC_MODEL.md. None of the three existing rules use
-                        // it — they're exact ESLint-parity ports, where matching
-                        // by name/shape alone is the deliberate, documented
-                        // behavior, not a gap to close with real resolution.
+                        // first call. Reach for this when your rule needs identifier
+                        // resolution (e.g. "does this call refer to a particular
+                        // import, or a same-named local?"); see SEMANTIC_MODEL.md.
+                        // All three existing rules use it now: no_native_map.rs
+                        // resolves Map references instead of tracking a file-wide
+                        // binding flag, and no_arrow_function_create_selector.rs /
+                        // reselect_arity_match.rs resolve a bare createSelector
+                        // callee via the shared helper in src/rules/reselect.rs.
+                        // Use semantic().resolve(&reference_identifier) and check
+                        // binding.import() -- do not match by identifier text alone
+                        // when what you actually care about is where a name came
+                        // from.
 ```
 
 ### The three existing rules, and what each teaches
 
 | Rule | File | AST techniques worth copying |
 | --- | --- | --- |
-| `no-native-map` | `src/rules/no_native_map.rs` | Import/`require` tracking, destructuring patterns, **stateful** traversal — accumulates `ImmutableBindings` while walking, relying on `descendants()` being preorder so a declaration is seen before its uses |
-| `no-arrow-function-create-selector` | `src/rules/no_arrow_function_create_selector.rs` | Arrow functions, walking *up* to a parent declarator |
-| `reselect-arity-match` | `src/rules/reselect_arity_match.rs` | Call expressions, identifier vs member callees, parameter-list arity |
+| `no-native-map` | `src/rules/no_native_map.rs` | Import/`require` tracking, destructuring patterns, and **semantic resolution** — a forward pass over declarators builds two `HashSet<usize>` offset sets (which bindings represent the `immutable` module vs. its `Map` export) via `file.semantic()`, then every `Map` reference is checked against those sets independently, so shadowing resolves correctly |
+| `no-arrow-function-create-selector` | `src/rules/no_arrow_function_create_selector.rs` | Arrow functions, walking *up* to a parent declarator, and resolving the callee against `import { createSelector } from "reselect"` via the shared helper in `src/rules/reselect.rs` |
+| `reselect-arity-match` | `src/rules/reselect_arity_match.rs` | Call expressions, identifier vs member callees, parameter-list arity; the identifier callee is resolved semantically (same shared helper), the member-expression callee deliberately stays name-based |
 
 The shape they all share:
 
@@ -191,7 +196,9 @@ const MESSAGE: &str =
     "Avoid await inside a loop; collect the promises and await Promise.all instead.";
 
 // Unit struct — a rule holds no state between files. Per-file state lives in
-// check() (see ImmutableBindings in no_native_map.rs).
+// check() (see the ImmutableAliases offset sets built once per call in
+// no_native_map.rs, or the pending_refs/resolutions built once per file in
+// semantic/builder.rs, for the shape this usually takes).
 pub struct NoAwaitInLoop;
 
 impl Rule for NoAwaitInLoop {

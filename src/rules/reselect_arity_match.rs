@@ -5,8 +5,10 @@ use biome_rowan::{AstNode, AstSeparatedList};
 
 use crate::analyzer::runner::FileContext;
 use crate::diagnostics::Violation;
+use crate::rules::reselect::resolves_to_reselect_create_selector;
 use crate::rules::rule::Rule;
 use crate::rules::JS_EXTENSIONS;
+use crate::semantic::SemanticModel;
 
 pub struct ReselectArityMatch;
 
@@ -24,13 +26,14 @@ impl Rule for ReselectArityMatch {
     }
 
     fn check(&self, file: &FileContext) -> Vec<Violation> {
+        let semantic = file.semantic();
         let mut violations = Vec::new();
 
         for node in file.tree().descendants() {
             let Some(call) = JsCallExpression::cast_ref(&node) else {
                 continue;
             };
-            if !is_create_selector_callee(&call) {
+            if !is_create_selector_callee(&call, semantic) {
                 continue;
             }
 
@@ -70,14 +73,27 @@ impl Rule for ReselectArityMatch {
     }
 }
 
-/// Matches `createSelector(...)` and `something.createSelector(...)`, mirroring
-/// the ESLint rule's Identifier/MemberExpression callee check.
-fn is_create_selector_callee(call: &JsCallExpression) -> bool {
+/// Matches `createSelector(...)` and `something.createSelector(...)`.
+///
+/// The bare-identifier form is resolved semantically: the callee must
+/// actually be bound to `import { createSelector } from "reselect"` (or its
+/// aliased form), not merely spelled `createSelector` -- a same-named local
+/// function, a shadowing parameter, or an import from a different module
+/// all correctly fail to match.
+///
+/// The member-expression form (`x.createSelector(...)`) is intentionally
+/// left exactly as it was: matched by member name alone, mirroring the
+/// original ESLint rule's plain Identifier/MemberExpression callee check.
+/// Resolving `x` semantically would only ever cover the narrow case of a
+/// namespace or default import used via member access, and doing that
+/// cleanly without drifting into module-resolution territory is out of
+/// scope for this migration -- see docs/SEMANTIC_MODEL.md.
+fn is_create_selector_callee(call: &JsCallExpression, semantic: &SemanticModel) -> bool {
     match call.callee() {
         Ok(AnyJsExpression::JsIdentifierExpression(ident)) => ident
             .name()
-            .and_then(|n| n.value_token())
-            .is_ok_and(|t| t.text_trimmed() == "createSelector"),
+            .ok()
+            .is_some_and(|reference| resolves_to_reselect_create_selector(semantic, &reference)),
         Ok(AnyJsExpression::JsStaticMemberExpression(member)) => member
             .member()
             .ok()

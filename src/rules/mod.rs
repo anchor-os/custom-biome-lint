@@ -1,6 +1,7 @@
 pub mod no_arrow_function_create_selector;
 pub mod no_native_map;
 pub mod registry;
+mod reselect;
 pub mod reselect_arity_match;
 pub mod rule;
 
