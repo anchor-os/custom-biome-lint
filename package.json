@@ -1,6 +1,6 @@
 {
   "name": "custom-biome-lint",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Standalone linting tool for Reselect/Redux patterns not in Biome",
   "bin": {
     "custom-biome-lint": "bin/cli.js"
@@ -30,8 +30,7 @@
     "url": "git+https://github.com/anchor-os/custom-biome-lint.git"
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "license": "MIT"
 }
