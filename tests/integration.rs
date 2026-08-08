@@ -145,6 +145,27 @@ mod no_arrow_function_create_selector {
         assert!(violations
             .iter()
             .all(|v| v.message.contains("breaks memoization")));
+        assert!(
+            violations.iter().all(|v| v.fix.is_some()),
+            "a synchronous wrapper always has an unambiguous fix: {violations:?}"
+        );
+    }
+
+    /// An `async` arrow returns a Promise that resolves to the selector, not
+    /// the selector itself. Unwrapping it would silently hand callers a
+    /// selector instead of a Promise, so the violation is still reported but
+    /// left unfixed for a human to look at.
+    #[test]
+    fn async_wrapper_is_reported_but_left_unfixed() {
+        let source = "const selectAll = async () => createSelector(a, b);\n";
+        let violations = check_source(RULE, source, Path::new("a.js"));
+        assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert!(violations[0].message.contains("breaks memoization"));
+        assert!(
+            violations[0].fix.is_none(),
+            "async wrapper must not get an autofix: {:?}",
+            violations[0]
+        );
     }
 
     #[test]

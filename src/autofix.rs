@@ -63,12 +63,22 @@ pub struct Autofix;
 impl Autofix {
     /// Applies every fix rules produced for `violations_by_file`.
     ///
+    /// `violations_by_file` carries the exact source each violation's `Fix`
+    /// offsets were computed against, alongside the violations. This is
+    /// re-read from disk and compared before planning: a `Fix`'s offsets are
+    /// only valid against the source they were computed from, and reusing
+    /// them against a file that changed in between (e.g. another process
+    /// edited it after this tool analyzed it but before it got here to
+    /// apply the fix) can silently rewrite the wrong bytes while still
+    /// leaving the file parseable, so a changed file is skipped entirely
+    /// rather than risking that.
+    ///
     /// With `write` false this is a dry run: files are read and planned but
     /// not modified. Per-file read/write errors are recorded in
     /// [`AutofixReport::failures`] rather than aborting the whole run, so one
     /// unwritable file cannot discard the fixes for every other file.
     pub fn apply(
-        violations_by_file: &BTreeMap<PathBuf, Vec<Violation>>,
+        violations_by_file: &BTreeMap<PathBuf, (String, Vec<Violation>)>,
         write: bool,
     ) -> AutofixReport {
         let mut report = AutofixReport {
@@ -76,8 +86,8 @@ impl Autofix {
             ..AutofixReport::default()
         };
 
-        for (path, violations) in violations_by_file {
-            let source = match fs::read_to_string(path) {
+        for (path, (analyzed_source, violations)) in violations_by_file {
+            let current_source = match fs::read_to_string(path) {
                 Ok(source) => source,
                 Err(error) => {
                     report.failures.push((path.clone(), error.to_string()));
@@ -85,7 +95,19 @@ impl Autofix {
                 }
             };
 
-            let plan = plan_file(path, &source, violations);
+            if current_source != *analyzed_source {
+                for violation in violations {
+                    report.skipped.push(SkippedFix {
+                        path: path.clone(),
+                        line: violation.line,
+                        rule: violation.rule,
+                        reason: "file changed on disk since it was analyzed",
+                    });
+                }
+                continue;
+            }
+
+            let plan = plan_file(path, &current_source, violations);
             report.skipped.extend(plan.skipped);
 
             if plan.applied.is_empty() {
@@ -93,7 +115,7 @@ impl Autofix {
             }
 
             if write {
-                if let Err(error) = fs::write(path, &plan.source) {
+                if let Err(error) = write_atomically(path, &plan.source) {
                     report.failures.push((path.clone(), error.to_string()));
                     continue;
                 }
@@ -105,6 +127,22 @@ impl Autofix {
 
         report
     }
+}
+
+/// Writes `contents` to `path` via a same-directory temp file plus rename,
+/// so a write that fails partway (disk full, process killed) leaves the
+/// original file untouched instead of a half-written one: `fs::write`
+/// truncates its target before writing, but a rename onto an existing path
+/// is atomic on the same filesystem.
+fn write_atomically(path: &Path, contents: &str) -> std::io::Result<()> {
+    let tmp_path = tmp_sibling(path);
+    fs::write(&tmp_path, contents)?;
+    fs::rename(&tmp_path, path)
+}
+
+fn tmp_sibling(path: &Path) -> PathBuf {
+    let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+    path.with_file_name(format!(".{file_name}.autofix-tmp-{}", std::process::id()))
 }
 
 /// Plans the fixes for a single file without touching disk.
@@ -119,16 +157,35 @@ fn plan_file(path: &Path, source: &str, violations: &[Violation]) -> FilePlan {
     let mut skipped = Vec::new();
 
     for violation in violations {
-        if violation.fix.is_some() {
-            fixable.push(violation);
-        } else {
+        let Some(fix) = violation.fix.as_ref() else {
             skipped.push(SkippedFix {
                 path: path.to_path_buf(),
                 line: violation.line,
                 rule: violation.rule,
                 reason: "rule has no autofix for this violation",
             });
+            continue;
+        };
+
+        // A malformed Fix (reversed bounds, past the end of the source, or
+        // splitting a UTF-8 code point) would otherwise panic when sliced
+        // below and abort the whole run. Reject it here instead: a rule bug
+        // should mean one skipped violation, never a crashed lint run.
+        if fix.start > fix.end
+            || fix.end > source.len()
+            || !source.is_char_boundary(fix.start)
+            || !source.is_char_boundary(fix.end)
+        {
+            skipped.push(SkippedFix {
+                path: path.to_path_buf(),
+                line: violation.line,
+                rule: violation.rule,
+                reason: "rule produced an invalid fix range",
+            });
+            continue;
         }
+
+        fixable.push(violation);
     }
 
     if fixable.is_empty() {
@@ -285,6 +342,38 @@ mod tests {
     }
 
     #[test]
+    fn a_fix_with_reversed_bounds_is_skipped_not_a_panic() {
+        let source = "const x = 1;\n";
+        let violations = vec![violation(1, "some-rule", 5, 2, "x")];
+        let plan = plan_file(Path::new("a.js"), source, &violations);
+        assert!(plan.applied.is_empty());
+        assert_eq!(plan.skipped[0].reason, "rule produced an invalid fix range");
+        assert_eq!(plan.source, source);
+    }
+
+    #[test]
+    fn a_fix_past_the_end_of_the_source_is_skipped_not_a_panic() {
+        let source = "const x = 1;\n";
+        let violations = vec![violation(1, "some-rule", 5, source.len() + 10, "x")];
+        let plan = plan_file(Path::new("a.js"), source, &violations);
+        assert!(plan.applied.is_empty());
+        assert_eq!(plan.skipped[0].reason, "rule produced an invalid fix range");
+        assert_eq!(plan.source, source);
+    }
+
+    #[test]
+    fn a_fix_splitting_a_utf8_code_point_is_skipped_not_a_panic() {
+        // "café" -- 'é' is a 2-byte code point starting at byte 4, so byte 5
+        // falls inside it and is not a valid char boundary.
+        let source = "café\n";
+        let violations = vec![violation(1, "some-rule", 4, 5, "e")];
+        let plan = plan_file(Path::new("a.js"), source, &violations);
+        assert!(plan.applied.is_empty());
+        assert_eq!(plan.skipped[0].reason, "rule produced an invalid fix range");
+        assert_eq!(plan.source, source);
+    }
+
+    #[test]
     fn apply_reports_files_modified_and_respects_dry_run() {
         let dir = tempfile::TempDir::new().unwrap();
         let file = dir.path().join("a.js");
@@ -296,13 +385,16 @@ mod tests {
         let end = source.find(";\n").unwrap();
         violations_by_file.insert(
             file.clone(),
-            vec![violation(
-                1,
-                "no-arrow-function-create-selector",
-                start,
-                end,
-                "createSelector(a, b)",
-            )],
+            (
+                source.clone(),
+                vec![violation(
+                    1,
+                    "no-arrow-function-create-selector",
+                    start,
+                    end,
+                    "createSelector(a, b)",
+                )],
+            ),
         );
 
         let dry = Autofix::apply(&violations_by_file, false);
@@ -319,6 +411,48 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&file).unwrap(),
             "const x = createSelector(a, b);\n"
+        );
+    }
+
+    #[test]
+    fn a_file_changed_since_analysis_is_skipped_not_rewritten_at_stale_offsets() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("a.js");
+        let analyzed_source = "const x = () => createSelector(a, b);\n";
+        fs::write(&file, analyzed_source).unwrap();
+
+        let start = analyzed_source.find("() =>").unwrap();
+        let end = analyzed_source.find(";\n").unwrap();
+        let mut violations_by_file = BTreeMap::new();
+        violations_by_file.insert(
+            file.clone(),
+            (
+                analyzed_source.to_string(),
+                vec![violation(
+                    1,
+                    "no-arrow-function-create-selector",
+                    start,
+                    end,
+                    "createSelector(a, b)",
+                )],
+            ),
+        );
+
+        // The file on disk no longer matches what was analyzed -- applying
+        // the old offsets to this content would rewrite the wrong bytes.
+        let changed_on_disk = "const somethingElse = 1;\nconst x = () => createSelector(a, b);\n";
+        fs::write(&file, changed_on_disk).unwrap();
+
+        let report = Autofix::apply(&violations_by_file, true);
+        assert!(report.fixes_applied.is_empty());
+        assert_eq!(
+            report.skipped[0].reason,
+            "file changed on disk since it was analyzed"
+        );
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            changed_on_disk,
+            "must not touch a file that changed since analysis"
         );
     }
 }

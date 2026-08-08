@@ -357,7 +357,7 @@ them or loosen the pins** — see
 ## Testing
 
 ```sh
-cargo test                                    # 108 tests: 76 unit + 31 integration + 1 doctest
+cargo test                                    # 113 tests: 80 unit + 32 integration + 1 doctest
 cargo fmt --all -- --check                    # no diff expected
 cargo clippy --all-targets -- -D warnings     # no warnings expected
 cargo audit                                   # no advisories beyond .cargo/audit.toml's ignore list

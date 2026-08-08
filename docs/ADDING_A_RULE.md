@@ -17,7 +17,7 @@ use biome_js_syntax::{AnyJsExpression, JsCallExpression};
 use biome_rowan::AstNode;
 
 use crate::analyzer::runner::FileContext;
-use crate::diagnostics::Violation;
+use crate::diagnostics::{Fix, Violation};
 use crate::rules::rule::Rule;
 use crate::rules::JS_EXTENSIONS;
 

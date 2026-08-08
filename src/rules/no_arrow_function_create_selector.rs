@@ -47,28 +47,32 @@ impl Rule for NoArrowFunctionCreateSelector {
             let range = arrow.syntax().text_trimmed_range();
             let offset = usize::from(range.start());
             let (line, col) = file.line_col(offset);
-            // Unwrapping the arrow is always the same mechanical edit: replace
-            // the whole `(...) => createSelector(...)` with just the call,
-            // keeping the call's own original formatting verbatim.
-            let fix = Fix {
-                start: offset,
-                end: usize::from(range.end()),
-                replacement: call.syntax().text_trimmed().to_string(),
-            };
-            violations.push(
-                Violation::error(
-                    self.name(),
-                    line,
-                    col,
-                    format!(
-                        "Avoid wrapping createSelector in an arrow function for \"{name}\". \
-                         It breaks memoization (a new selector is created on every call). \
-                         Use createSelector directly, or rename to \"{}\".",
-                        factory_name(&name)
-                    ),
-                )
-                .with_fix(fix),
+            let mut violation = Violation::error(
+                self.name(),
+                line,
+                col,
+                format!(
+                    "Avoid wrapping createSelector in an arrow function for \"{name}\". \
+                     It breaks memoization (a new selector is created on every call). \
+                     Use createSelector directly, or rename to \"{}\".",
+                    factory_name(&name)
+                ),
             );
+            // Unwrapping the arrow is otherwise always the same mechanical
+            // edit: replace the whole `(...) => createSelector(...)` with
+            // just the call, keeping the call's own original formatting
+            // verbatim. But an `async` arrow returns a Promise that resolves
+            // to the selector, not the selector itself -- unwrapping it would
+            // silently change what callers get back, so it is still reported
+            // but left for a human to fix.
+            if arrow.async_token().is_none() {
+                violation = violation.with_fix(Fix {
+                    start: offset,
+                    end: usize::from(range.end()),
+                    replacement: call.syntax().text_trimmed().to_string(),
+                });
+            }
+            violations.push(violation);
         }
 
         violations

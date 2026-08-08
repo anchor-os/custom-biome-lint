@@ -17,20 +17,20 @@ Plus a one-off portability check documented at the end.
 cargo test
 ```
 
-Expected: **108 passing, 0 failing**, in four suites.
+Expected: **113 passing, 0 failing**, in four suites.
 
 ```
 Running unittests src/lib.rs
-running 76 tests
-test result: ok. 76 passed
+running 80 tests
+test result: ok. 80 passed
 
 Running unittests src/bin/custom-biome-lint.rs
 running 0 tests
 test result: ok. 0 passed
 
 Running tests/integration.rs
-running 31 tests
-test result: ok. 31 passed
+running 32 tests
+test result: ok. 32 passed
 
 Doc-tests custom_biome_lint
 running 1 test
@@ -41,14 +41,14 @@ The binary suite reporting 0 tests is expected — `src/bin/custom-biome-lint.rs
 7 lines that delegate to `cli::run()`, so everything is tested through the
 library.
 
-### Unit tests (76, in `src/`)
+### Unit tests (80, in `src/`)
 
 Colocated `#[cfg(test)]` modules testing components in isolation.
 
 | Module | Count | What it covers |
 | --- | --- | --- |
 | `analyzer::file_matcher` | 8 | Glob semantics: `*` staying within a segment, `**` spanning directories, `?`, brace expansion, extension collection from alternatives, `root_dir()` stopping at the first wildcard |
-| `autofix` | 5 | A single fix applied, a violation with no `Fix` left as skipped rather than dropped, overlapping fixes only applying the first, a fix that would break parsing rejected before writing, dry run vs write behaviour |
+| `autofix` | 9 | A single fix applied, a violation with no `Fix` left as skipped rather than dropped, overlapping fixes only applying the first, a fix that would break parsing rejected before writing, invalid fix ranges (reversed, past the end, splitting a UTF-8 code point) rejected without panicking, a file changed on disk since analysis skipped rather than rewritten at stale offsets, dry run vs write behaviour |
 | `cache` | 9 | Content-hash cache creation, marking/saving, content changes invalidating regardless of mtime, identical content staying valid after a rewrite, cache-key (rule set + version) changes invalidating, disk round-trip, corrupted-cache recovery, old mtime-format entries silently ignored |
 | `cli::args` | 20 | Quiet defaults, repeated `-v`, verbosity saturating at 3, clustered short flags (`-vd`), positional pattern, rejection of unknown flags and duplicate positionals, `--write-fix`/`--auto-fix` defaulting to writing, `--dry-run` requiring one of them, `--write-fix` and `--auto-fix` rejected together, `--format` parsing and its rejection alongside `--write-fix`/`--auto-fix` |
 | `config::package_config` | 7 | Missing `package.json`, legacy array form, object form with `off`/`warn`/`error`, malformed entries warning and being skipped |
@@ -63,7 +63,7 @@ cargo test --lib suppress
 cargo test --lib file_matcher
 ```
 
-### Integration tests (31, in `tests/integration.rs`)
+### Integration tests (32, in `tests/integration.rs`)
 
 These drive the public API — mostly `lint_source`, which runs the full
 parse → check → suppression-filter pipeline, the same path the CLI uses. The
@@ -74,7 +74,7 @@ behaviour that only exists at the `cli::run()` layer.
 | --- | --- | --- |
 | `no_native_map` | 7 | Native `Map` reported; Immutable named import, namespace-plus-destructure, and `require` alias all allowed; `Map` from an unrelated module still reported; suppressions work; edge cases produce exactly the documented violations |
 | `reselect_arity_match` | 5 | Mismatched arity reported, matching arity allowed, member-expression callee (`reselect.createSelector`) checked, suppressions work, edge cases flag only the namespaced mismatch |
-| `no_arrow_function_create_selector` | 4 | Wrapped `createSelector` reported, direct call and `make*` factory allowed, suppressions work, edge cases flag only the non-factory `make`-prefixed name |
+| `no_arrow_function_create_selector` | 5 | Wrapped `createSelector` reported with a fix attached, direct call and `make*` factory allowed, suppressions work, edge cases flag only the non-factory `make`-prefixed name, an `async` wrapper is reported but left without a fix |
 | `patterns` | 4 | Bare directory expands to a brace glob, bare directory discovers every fixture, explicit glob passed through unchanged, `node_modules` never walked |
 | `cli_behavior` | 4 | `--format json` still emits a document when every rule is disabled; `--auto-fix` unwraps the arrow and relints clean; `--auto-fix --dry-run` leaves the file untouched; `--write-fix` and `--auto-fix` together is rejected |
 | `config` | 3 | `ignoreBiomeExtensionRules` filters rules out; missing `package.json` enables everything; `warn` severity reports without disabling |

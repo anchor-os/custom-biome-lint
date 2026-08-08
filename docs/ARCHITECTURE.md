@@ -541,7 +541,11 @@ wrapper) is pure for the same testability reason as `fixer::plan_file`:
 
 1. Split violations into those with a `Fix` and those without; the latter are
    recorded as `SkippedFix { reason: "rule has no autofix for this
-   violation", .. }` immediately.
+   violation", .. }` immediately. Any `Fix` with reversed bounds, an end past
+   the source's length, or an offset that splits a UTF-8 code point is
+   rejected the same way (`"rule produced an invalid fix range"`) before it
+   ever reaches a string slice — a malformed `Fix` from a buggy rule costs
+   that one violation, not a panicked run.
 2. Sort the fixable ones by `Fix::start` and apply them left to right,
    splicing each `replacement` in for `source[start..end]`. A fix whose
    `start` falls before the current write cursor overlaps one already
@@ -551,6 +555,23 @@ wrapper) is pure for the same testability reason as `fixer::plan_file`:
    file's fixes are written — every accepted fix for that file reverts to
    skipped (`"applying the fix would leave the file unparseable"`) and the
    original source is returned unchanged.
+
+Two more checks live in `Autofix::apply` itself, above `plan_file`:
+
+- **Stale-offset detection.** `Fix` offsets are only valid against the exact
+  source they were computed from. `apply` takes that source alongside the
+  violations and compares it against a fresh read of the file; if they no
+  longer match — something else wrote to the file between analysis and here
+  — every violation for that file is skipped
+  (`"file changed on disk since it was analyzed"`) rather than splicing old
+  offsets into new content, which would still parse cleanly while rewriting
+  the wrong bytes.
+- **Atomic writes.** Writing is a temp file in the same directory followed by
+  a rename, not a direct `fs::write` to the target. `fs::write` truncates its
+  target before writing the replacement; a process kill or full disk mid-write
+  would otherwise leave a half-written source file. The rename is atomic on
+  the same filesystem, so the destination is either the old content or the
+  new content, never a partial write.
 
 Like `Fixer::apply_suppressions`, `Autofix::apply` reads and writes each file
 independently and records per-file IO errors in `AutofixReport::failures`

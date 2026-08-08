@@ -183,6 +183,10 @@ where
     // Build reports
     let mut reports = Vec::new();
     let mut to_fix: BTreeMap<PathBuf, Vec<Violation>> = BTreeMap::new();
+    // Carries the exact source each violation's Fix offsets were computed
+    // against, so Autofix::apply can detect a file that changed on disk
+    // between analysis and here and refuse to apply now-stale offsets to it.
+    let mut to_autofix: BTreeMap<PathBuf, (String, Vec<Violation>)> = BTreeMap::new();
 
     for (file, source, mut analyzed) in analyzed_files {
         if !analyzed.parsed_cleanly {
@@ -202,8 +206,11 @@ where
         );
 
         if !analyzed.violations.is_empty() {
-            if args.write_fix || args.auto_fix {
+            if args.write_fix {
                 to_fix.insert(file.clone(), analyzed.violations.clone());
+            }
+            if args.auto_fix {
+                to_autofix.insert(file.clone(), (source.clone(), analyzed.violations.clone()));
             }
             reports.push(FileReport::new(
                 display_path(&file, cwd),
@@ -247,7 +254,7 @@ where
     }
 
     if args.auto_fix {
-        let fixed = Autofix::apply(&to_fix, !args.dry_run);
+        let fixed = Autofix::apply(&to_autofix, !args.dry_run);
         reporter.print_autofix_report(&fixed, cwd);
 
         if cache_saved {
