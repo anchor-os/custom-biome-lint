@@ -3,7 +3,7 @@ name: Publish to npm
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
 
 # id-token: write is required for npm trusted publishing (OIDC). The publish
@@ -27,8 +27,8 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
+          node-version: "26.4.0"
+          registry-url: "https://registry.npmjs.org"
           package-manager-cache: false # never cache in release builds
 
       - name: Ensure npm >= 11.5.1 (OIDC support)

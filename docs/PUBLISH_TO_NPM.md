@@ -105,7 +105,7 @@ Recommended additions before a first publish:
     "type": "git",
     "url": "https://gitlab.com/your-org/custom-biome-lint.git"
   },
-  "engines": { "node": ">=18" }
+  "engines": { "node": ">=26.4.0" }
 }
 ```
 
