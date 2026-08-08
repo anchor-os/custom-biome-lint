@@ -17,7 +17,7 @@ use biome_js_syntax::{AnyJsExpression, JsCallExpression};
 use biome_rowan::AstNode;
 
 use crate::analyzer::runner::FileContext;
-use crate::diagnostics::Violation;
+use crate::diagnostics::{Fix, Violation};
 use crate::rules::rule::Rule;
 use crate::rules::JS_EXTENSIONS;
 
@@ -149,6 +149,34 @@ comment will not be where they expect it.
 `Violation::error(name, line, col, message)` is the common case.
 `Violation::warning(...)` exists for non-blocking findings — warnings appear in
 output but the tool's exit code is driven by errors.
+
+### Autofix (optional)
+
+Only attach a [`Fix`](../src/diagnostics/violation.rs) when the correction is
+unambiguous. If producing one would mean guessing (which argument to add,
+which side of a mismatch is wrong), leave it out — a violation with no `Fix`
+is reported as skipped by `--auto-fix`, which is the honest answer, rather
+than silently doing the wrong rewrite. This is why `reselect-arity-match` and
+`no-native-map` don't have one, while `no-arrow-function-create-selector`
+does: unwrapping `() => createSelector(...)` to `createSelector(...)` is
+always correct, with nothing to guess.
+
+You compute the `Fix` in the same `check()` call that detected the violation
+— never in a second pass — because only the code that found the violation
+still has the exact syntax node in hand:
+
+```rust
+let range = arrow.syntax().text_trimmed_range();
+let fix = Fix {
+    start: usize::from(range.start()),
+    end: usize::from(range.end()),
+    replacement: call.syntax().text_trimmed().to_string(),
+};
+violations.push(Violation::error(self.name(), line, col, message).with_fix(fix));
+```
+
+`--auto-fix` (see `src/autofix.rs`) applies the byte-range replacement,
+verifies the rewritten file still parses, and only then writes it.
 
 ## Step 2 — Register the rule
 
@@ -309,6 +337,8 @@ The last command should now include your rule's findings from
 - [ ] `fixtures/<rule_name>/{valid,invalid,suppressed}.js` exist
 - [ ] Test module added to `tests/integration.rs`
 - [ ] Rule documented in [RULES.md](RULES.md), including any known limitations
+- [ ] Decided whether the rule can attach a `Fix` (only if unambiguous — see
+      Autofix above); either way, no silent guessing
 - [ ] `cargo test` and `cargo clippy --all-targets` are clean
 
 ## Finding the right Biome AST types

@@ -67,8 +67,9 @@ Quote globs so your shell does not expand them first.
 | Flag | Effect |
 | --- | --- |
 | `--write-fix` | Add a suppression comment for every violation, in place |
-| `--dry-run` | With `--write-fix`, report the comments without writing |
-| `--format <text\|json>` | Diagnostics output format (default: `text`). Not supported with `--write-fix`. |
+| `--auto-fix` | Rewrite violations in place using each rule's own fix; rules with no unambiguous fix are reported as skipped. Cannot combine with `--write-fix`. |
+| `--dry-run` | With `--write-fix` or `--auto-fix`, report the changes without writing |
+| `--format <text\|json>` | Diagnostics output format (default: `text`). Not supported with `--write-fix` or `--auto-fix`. |
 | `-v`, `--verbose` | Config source, enabled/skipped rules, resolved pattern |
 | `-vv` | Brace expansion, walk root, discovery counts |
 | `-vvv` | Per-file: rules run, violation count, line count |
@@ -84,12 +85,12 @@ Diagnostics go to **stdout**; all logging and warnings go to **stderr**, so
 
 | Code | Meaning |
 | --- | --- |
-| `0` | No violations (with `--write-fix`: every violation was suppressed) |
-| `1` | Violations found, or a violation could not be suppressed |
+| `0` | No violations (with `--write-fix`: every violation was suppressed; with `--auto-fix`: every violation was fixed) |
+| `1` | Violations found, or a violation could not be suppressed/fixed |
 | `2` | Bad usage, or the pattern's root directory does not exist |
 
-A `--write-fix --dry-run` run that has anything to write also exits `1`, so it
-works as a CI check.
+A `--write-fix --dry-run` or `--auto-fix --dry-run` run that has anything to
+write also exits `1`, so either works as a CI check.
 
 ## Output
 
@@ -252,6 +253,35 @@ block comment, and any file with parse errors. Every rewrite is re-parsed and
 re-checked before it is written, and `--write-fix` exits non-zero if any
 violation was left unsuppressed.
 
+## Fixing violations instead of suppressing them
+
+`--auto-fix` rewrites the flagged code itself, using the exact edit the rule
+that detected the violation produced — a different mechanism from
+`--write-fix`, which never touches the flagged code and only adds a comment
+around it:
+
+```bash
+custom-biome-lint --auto-fix --dry-run src   # report what would change
+custom-biome-lint --auto-fix src             # apply it
+```
+
+Only a rule with one unambiguous correction produces a fix; a rule where the
+correction would have to guess (e.g. `reselect-arity-match`, which cannot know
+whether the selector list or the result function is the one that's wrong)
+leaves it `None` and its violations are reported as skipped rather than
+guessed at. Currently:
+
+| Rule | Fix |
+| --- | --- |
+| `no-arrow-function-create-selector` | Unwraps the arrow, keeping the `createSelector(...)` call as-is |
+| `no-native-map` | None — `Map` occurrences it flags include known false positives (see ESLint parity below), so there is no always-safe rewrite |
+| `reselect-arity-match` | None — the fix would have to guess which side of the mismatch is wrong |
+
+As with `--write-fix`, every rewrite is re-parsed before it is written, and
+`--auto-fix` exits non-zero if anything was left unfixed. `--write-fix` and
+`--auto-fix` cannot be combined in one run — apply one, look at the result,
+then the other if you want both.
+
 ## ESLint parity
 
 These rules reproduce their ESLint counterparts' findings exactly. One
@@ -298,7 +328,8 @@ src/
   rules/                     Rule trait, registry, one module per rule
   suppress/                  biome-ignore-line / -next-line parsing
   fixer.rs                   --write-fix: safe suppression-comment placement
-  diagnostics/               Violation type and ESLint-style formatter
+  autofix.rs                 --auto-fix: applies each rule's own Fix in place
+  diagnostics/               Violation/Fix types and ESLint-style formatter
 fixtures/<rule_name>/        valid.js, invalid.js, suppressed.js, edge-cases.js per rule
 tests/integration.rs         end-to-end rule, config and pattern tests
 scripts/benchmark.sh         re-runnable cold/warm/rayon/rule-cost benchmark
@@ -326,7 +357,7 @@ them or loosen the pins** — see
 ## Testing
 
 ```sh
-cargo test                                    # 92 tests: 64 unit + 27 integration + 1 doctest
+cargo test                                    # 117 tests: 84 unit + 32 integration + 1 doctest
 cargo fmt --all -- --check                    # no diff expected
 cargo clippy --all-targets -- -D warnings     # no warnings expected
 cargo audit                                   # no advisories beyond .cargo/audit.toml's ignore list

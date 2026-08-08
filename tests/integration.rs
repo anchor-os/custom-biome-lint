@@ -145,6 +145,27 @@ mod no_arrow_function_create_selector {
         assert!(violations
             .iter()
             .all(|v| v.message.contains("breaks memoization")));
+        assert!(
+            violations.iter().all(|v| v.fix.is_some()),
+            "a synchronous wrapper always has an unambiguous fix: {violations:?}"
+        );
+    }
+
+    /// An `async` arrow returns a Promise that resolves to the selector, not
+    /// the selector itself. Unwrapping it would silently hand callers a
+    /// selector instead of a Promise, so the violation is still reported but
+    /// left unfixed for a human to look at.
+    #[test]
+    fn async_wrapper_is_reported_but_left_unfixed() {
+        let source = "const selectAll = async () => createSelector(a, b);\n";
+        let violations = check_source(RULE, source, Path::new("a.js"));
+        assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert!(violations[0].message.contains("breaks memoization"));
+        assert!(
+            violations[0].fix.is_none(),
+            "async wrapper must not get an autofix: {:?}",
+            violations[0]
+        );
     }
 
     #[test]
@@ -345,5 +366,71 @@ mod cli_behavior {
             serde_json::from_str(stdout.trim()).expect("stdout must be valid JSON");
         assert_eq!(parsed["summary"]["clean"], true);
         assert_eq!(parsed["files"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn auto_fix_unwraps_the_arrow_and_relinting_is_then_clean() {
+        let tmpdir = TempDir::new().unwrap();
+        fs::write(
+            tmpdir.path().join("sample.js"),
+            "const selectAll = () => createSelector(a, b);\n",
+        )
+        .unwrap();
+
+        let fix = Command::new(env!("CARGO_BIN_EXE_custom-biome-lint"))
+            .arg(".")
+            .arg("--auto-fix")
+            .arg("--no-cache")
+            .current_dir(tmpdir.path())
+            .output()
+            .expect("failed to run custom-biome-lint");
+        assert!(fix.status.success(), "{:?}", fix);
+
+        let rewritten = fs::read_to_string(tmpdir.path().join("sample.js")).unwrap();
+        assert_eq!(rewritten, "const selectAll = createSelector(a, b);\n");
+
+        let relint = Command::new(env!("CARGO_BIN_EXE_custom-biome-lint"))
+            .arg(".")
+            .arg("--no-cache")
+            .current_dir(tmpdir.path())
+            .output()
+            .expect("failed to run custom-biome-lint");
+        assert!(
+            relint.status.success(),
+            "fixed file must relint clean: {:?}",
+            relint
+        );
+    }
+
+    #[test]
+    fn auto_fix_dry_run_leaves_the_file_untouched() {
+        let tmpdir = TempDir::new().unwrap();
+        let source = "const selectAll = () => createSelector(a, b);\n";
+        fs::write(tmpdir.path().join("sample.js"), source).unwrap();
+
+        let output = Command::new(env!("CARGO_BIN_EXE_custom-biome-lint"))
+            .arg(".")
+            .arg("--auto-fix")
+            .arg("--dry-run")
+            .arg("--no-cache")
+            .current_dir(tmpdir.path())
+            .output()
+            .expect("failed to run custom-biome-lint");
+
+        assert!(!output.status.success(), "unfixed violations remain");
+        assert_eq!(
+            fs::read_to_string(tmpdir.path().join("sample.js")).unwrap(),
+            source
+        );
+    }
+
+    #[test]
+    fn write_fix_and_auto_fix_together_is_rejected() {
+        let output = Command::new(env!("CARGO_BIN_EXE_custom-biome-lint"))
+            .arg("--write-fix")
+            .arg("--auto-fix")
+            .output()
+            .expect("failed to run custom-biome-lint");
+        assert!(!output.status.success());
     }
 }
