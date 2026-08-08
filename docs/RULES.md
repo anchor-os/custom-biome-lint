@@ -2,9 +2,19 @@
 
 Three rules, each a behaviour-for-behaviour port of a custom ESLint rule from
 `eslint-rules/`. The ports are deliberately faithful rather than "improved" —
-including reproducing one known false-positive class — so that turning this tool
-on produces exactly the findings the old ESLint setup produced, no more and no
-less. That property is what makes the migration verifiable.
+including reproducing one known false-positive class, `no-native-map`'s
+`mapboxgl.Map` — so that turning this tool on produces exactly the findings
+the old ESLint setup produced, no more and no less. That property is what
+made the initial migration verifiable.
+
+One deliberate exception since then: all three rules now resolve
+`createSelector`/`Map` identifiers against
+[the semantic model](SEMANTIC_MODEL.md) instead of matching by name alone,
+which changes output in the one place semantic resolution and ESLint parity
+actually conflicted — see each rule's own section, and
+[SEMANTIC_MODEL.md](SEMANTIC_MODEL.md#why-no-existing-rule-uses-this-yet) for
+the reasoning. A file that never shadows these names or imports them from an
+unrelated module — the overwhelming common case — sees no change at all.
 
 | Rule | Guards against | Extensions | `--auto-fix` |
 | --- | --- | --- | --- |
@@ -18,8 +28,8 @@ less. That property is what makes the migration verifiable.
 
 **Message:** `Use Immutable.js Map instead of native Map.`
 
-**Source:** `src/rules/no_native_map.rs` (298 lines — the largest rule, because it
-is the only stateful one)
+**Source:** `src/rules/no_native_map.rs` (324 lines — the largest rule, because it
+resolves the most import/alias forms against the semantic model)
 
 ### What it catches
 
@@ -68,13 +78,18 @@ const { Map } = Immutable;                    // destructure off the namespace
 const { Map } = require('immutable');         // destructure off require
 ```
 
-Once any of these establishes a `Map` binding, the rule stops reporting bare
-`Map` references in that file entirely — matching the original ESLint rule,
-which used the same file-level "is Immutable's Map in scope" heuristic rather
-than real scope analysis.
+Each of these registers a *binding* as Immutable's `Map`, and each `Map`
+reference is then resolved against [the semantic model](SEMANTIC_MODEL.md)
+independently — not a single file-wide switch. A `Map` reference that
+resolves to one of these bindings is clean; one that resolves to anything
+else (a shadowing parameter, an unrelated local variable, or nothing at all)
+is native and gets reported, no matter what else is imported elsewhere in
+the same file. See "Scope-aware since the semantic migration" below.
 
-Identifiers inside import specifiers are never reported, so `import { Map } from
-'immutable'` does not flag its own `Map`.
+A `Map`-named binding's own declaration is never reported on its own —
+`import { Map } from 'immutable'` never flags its own `Map`, and neither
+does a parameter or local variable simply named `Map`; only *uses* of a
+`Map` value are ever in question.
 
 ### Known quirk: `new mapboxgl.Map()` is a false positive
 
@@ -99,17 +114,32 @@ already absorbed this cost. If you want to narrow the rule to skip member-expres
 property names, do it as a deliberate, separately-reviewed change after the
 migration lands, not as part of it.
 
-### Other limitations
+### Scope-aware since the semantic migration
 
-- **No real scope analysis.** A locally-shadowed `Map` (e.g. a function parameter
-  named `Map`) is treated the same as a global. The original rule had the same
-  limitation. This is deliberate, not an unfixed gap: see
-  [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md#why-no-existing-rule-uses-this-yet) for
-  why the scope/binding model this codebase does have wasn't wired into this
-  rule to "fix" it.
-- **File-level binding state.** If Immutable's `Map` is imported anywhere in the
-  file, no bare `Map` is reported anywhere in that file, even in a function that
-  genuinely wants the native one.
+This rule now resolves every `Map` reference against
+[the semantic model](SEMANTIC_MODEL.md) rather than a single file-wide
+"Immutable's Map is bound somewhere" flag. Two consequences, both a
+deliberate departure from the original ESLint rule's behavior (see
+[SEMANTIC_MODEL.md](SEMANTIC_MODEL.md#why-no-existing-rule-uses-this-yet) for
+the earlier decision not to make this change, and why the current migration
+brief explicitly asked for it anyway):
+
+- **Shadowing resolves correctly.** `import { Map } from "immutable";
+  function test(Map) { return new Map(); }` now reports the inner `new
+  Map()` — it resolves to the parameter, not the import, so it really is
+  native Map. Previously this was a false negative: the file-wide flag
+  suppressed every `Map` in the file the moment any Immutable-derived
+  binding existed anywhere in it. A `Map`-named binding's own *declaration*
+  (the parameter itself, `const Map = ...`) is never flagged either way —
+  declaring a local by that name isn't itself a use of a value.
+- **No more file-wide suppression.** A function that imports Immutable's
+  `Map` for one purpose and also uses a differently-scoped native `Map` for
+  another is now evaluated per reference, not silenced wholesale.
+
+The `Immutable.Map`-shaped forms this rule recognizes (named import, default
+import, namespace-style member access, aliases, and the CommonJS
+`require('immutable')` form) are unchanged — see the recognized-forms list
+above.
 
 ---
 
@@ -184,6 +214,29 @@ useMemo(() => createSelector(a, b), []);
 const selectThing = () => reselect.createSelector(a, b);
 ```
 
+### The callee must resolve to reselect's `createSelector`
+
+The bare-identifier callee (`createSelector(...)`, not `x.createSelector(...)`)
+is resolved against [the semantic model](SEMANTIC_MODEL.md): it must be bound
+by `import { createSelector } from "reselect"`, aliased or not — a same-named
+local function, or a `createSelector` imported from a different module, is not
+flagged, and an aliased import is still flagged even though the identifier at
+the call site is spelled differently:
+
+```js
+// ✗ Flagged — resolves to reselect's createSelector despite the alias
+import { createSelector as selector } from 'reselect';
+export const selectAll = () => selector(a, b);
+
+// ✓ Not flagged — a local function, not reselect's export
+function createSelector() {}
+export const selectAll = () => createSelector(a, b);
+
+// ✓ Not flagged — createSelector from an unrelated module
+import { createSelector } from 'some-other-library';
+export const selectAll = () => createSelector(a, b);
+```
+
 These are gaps in coverage rather than false positives, and they are intentional:
 matching the original rule's reach exactly is what the parity guarantee requires.
 
@@ -243,6 +296,21 @@ Identifier/MemberExpression check:
 createSelector(...)            // bare identifier
 reselect.createSelector(...)   // static member expression
 ```
+
+The bare-identifier form is resolved against
+[the semantic model](SEMANTIC_MODEL.md), the same way as
+`no-arrow-function-create-selector`: it must be bound by
+`import { createSelector } from "reselect"` (aliased or not), so a
+same-named local function or a `createSelector` from a different module is
+not checked, while an aliased import still is. The member-expression form
+(`x.createSelector(...)`) is unchanged from the original ESLint rule —
+matched by member name alone, regardless of what `x` is — since resolving it
+semantically would only cover the narrow namespace/default-import case, and
+`edge-cases.js`'s own `Reselect.createSelector(...)` example deliberately
+never imports `Reselect` at all, to pin down that this form stays
+name-based. See
+[SEMANTIC_MODEL.md](SEMANTIC_MODEL.md#migrating-the-existing-rules) for the
+full reasoning.
 
 Only two result-function forms have a checkable arity:
 
@@ -337,10 +405,10 @@ Each rule has four fixture files under `fixtures/<rule_name>/`:
 | `suppressed.js` | The same violations, silenced by ignore comments |
 | `edge-cases.js` | Documented boundary behavior — gaps in coverage and known quirks, each pinned to an exact violation count |
 
-Running the tool over all fixtures yields 12 errors in 6 files — 7 from the
+Running the tool over all fixtures yields 11 errors in 6 files — 7 from the
 three `invalid.js` files (2 from `no-arrow-function-create-selector`, 2 from
-`no-native-map`, 3 from `reselect-arity-match`), plus 5 more from the three
-`edge-cases.js` files (3 from `no-native-map`, 1 from
+`no-native-map`, 3 from `reselect-arity-match`), plus 4 more from the three
+`edge-cases.js` files (2 from `no-native-map`, 1 from
 `no-arrow-function-create-selector`, 1 from `reselect-arity-match`) — each a
 deliberate, documented behavior rather than a bug. `valid.js` and
 `suppressed.js` contribute nothing. See [TESTING.md](TESTING.md).

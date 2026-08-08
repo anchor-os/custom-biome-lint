@@ -111,11 +111,22 @@ file.line_col(offset)  // byte offset -> (1-based line, 1-based col)
 file.source()          // &str — original text, if you need it
 file.path()            // &Path — the file being linted
 file.parsed_cleanly()  // bool — whether parsing produced errors
+file.semantic()        // &SemanticModel — lexical scopes, bindings, and identifier
+                        // resolution, built lazily on first call and shared just
+                        // like the tree
 ```
 
 The file is parsed **once** and every rule shares this tree — that is why `check`
 takes a `FileContext` rather than a raw `&str`. Never call
 `FileContext::parse` inside a rule.
+
+Reach for `file.semantic()` when a rule needs to know what an identifier
+*actually refers to*, not just what it's spelled — e.g. "is this `createSelector`
+call really reselect's export, or a same-named local function?" All three
+current rules resolve the identifiers they care about this way rather than
+matching by name alone; see `src/rules/no_native_map.rs` and
+`src/rules/reselect.rs` for worked examples, and
+[SEMANTIC_MODEL.md](SEMANTIC_MODEL.md) for the full API and its limits.
 
 ### Things a rule must NOT do
 

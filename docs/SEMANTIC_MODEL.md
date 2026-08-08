@@ -11,15 +11,16 @@ lazily and cached, so a rule that never calls it never pays for it, and a rule
 that does call it shares the same model every other rule that asked for it
 already got.
 
-## Status: infrastructure, not yet used by a rule
+## Status: backs all three existing rules
 
-This is deliberately new, currently-unused infrastructure — see "Why no
-existing rule uses this yet" below. It exists so a *future* rule that
-genuinely needs identifier resolution (e.g. "does this call actually refer to
-the `createSelector` reselect exports, or a same-named local function?") has
-something to build on, without reinventing scope tracking from scratch the way
-`no-native-map` currently does with its own bespoke, non-lexical
-`ImmutableBindings` state machine.
+All three rules resolve the identifiers they care about against this model
+rather than matching by name alone — `no-native-map` for `Map`,
+`no-arrow-function-create-selector` and `reselect-arity-match` for
+`createSelector` (the latter only for a bare-identifier callee; see "Migrating
+the existing rules" below for why the member-expression form,
+`x.createSelector(...)`, was deliberately left alone). This was not the
+original plan — see that section for why the initial call was to leave the
+rules untouched, and what changed.
 
 ## What it can answer
 
@@ -115,36 +116,65 @@ If a change to this model starts requiring any of the above, that's a signal
 to stop and simplify back to lexical scope/binding tracking, not to keep
 building.
 
-## Why no existing rule uses this yet
+## Migrating the existing rules
 
-All three existing rules are deliberately, exactly ESLint-parity ports (see
-[RULES.md](RULES.md) and the README's "ESLint parity" section) — matching the
-*original* rule's textual/structural reach, including its known gaps, is the
-entire point, because it's what makes "turning this tool on instead of the
-old ESLint rule changes nothing" a verifiable claim rather than an assumption:
+When this semantic model first landed, none of the three existing rules were
+wired up to it. The reasoning at the time: all three are deliberately,
+exactly ESLint-parity ports (see [RULES.md](RULES.md) and the README's
+"ESLint parity" section), matching the *original* rule's textual/structural
+reach — including its known gaps — is what made "turning this tool on
+instead of the old ESLint rule changes nothing" a verifiable claim. Fixing
+`no-native-map`'s shadowing false-negative, or making `createSelector`
+import-aware, would each have been a real behavior change dressed up as
+"just using the infrastructure that's already there."
 
-- `no-native-map` flags a parameter or local variable named `Map` shadowing
-  an Immutable import "both at its declaration and at its use... exactly like
-  the original ESLint rule" (see `fixtures/no_native_map/edge-cases.js`).
-  That is precisely the shadowing case this semantic model resolves
-  correctly — which means using it here would *fix* a behavior the project
-  documents as intentional parity, not a bug. Doing so would be a real
-  regression against this codebase's actual goal, dressed up as an
-  improvement.
-- `no-arrow-function-create-selector` and `reselect-arity-match` both match
-  `createSelector` (bare or as `x.createSelector`) by name alone, never by
-  where it came from. RULES.md documents this explicitly: "matching the
-  original rule's reach exactly is what the parity guarantee requires."
-  Making either import-aware would change what they flag on any file that
-  happens to have an unrelated same-named local `createSelector` — again, a
-  deviation from parity, not a fix.
+A follow-up migration explicitly asked for exactly that change anyway,
+having weighed the tradeoff deliberately rather than as an incidental side
+effect of "the model exists, so use it everywhere." What changed as a
+result:
 
-None of the three rules were rewritten as a result. This is the intended
-outcome per the design brief's own guidance: integrate a rule only where
-semantic resolution improves *this codebase's* definition of correctness, and
-leave the rest alone otherwise. A future rule that isn't an ESLint port —
-one where there's no legacy behavior to stay faithful to — is a much better
-candidate to build directly on this model.
+- **`no-native-map`** replaced its bespoke, non-lexical `ImmutableBindings`
+  state machine (a single file-wide "is Immutable's Map bound anywhere in
+  this file" boolean, built from ad hoc AST scanning) with per-reference
+  semantic resolution. `import { Map } from "immutable"; function test(Map)
+  { return new Map(); }` now correctly reports the inner `new Map()` — it
+  resolves to the parameter, not the import, so it's genuinely native. This
+  used to be a false negative: the file-wide flag suppressed every `Map` in
+  the file the instant *any* Immutable-derived binding existed anywhere in
+  it, parameter shadowing or not. A `Map`-named binding's own *declaration*
+  (the parameter itself) is still never flagged — declaring a local by that
+  name isn't a use of a value, so there's nothing for semantic resolution to
+  adjudicate there.
+- **`no-arrow-function-create-selector`** and **`reselect-arity-match`**
+  resolve a bare `createSelector(...)` callee against
+  `import { createSelector } from "reselect"` (aliased or not) instead of
+  matching the identifier's spelling. A same-named local function, or a
+  `createSelector` imported from an unrelated module, correctly no longer
+  matches; an aliased import (`import { createSelector as selector } from
+  "reselect"`) correctly still does, even though the identifier at the call
+  site is spelled `selector`.
+- **`reselect-arity-match`**'s member-expression callee form
+  (`x.createSelector(...)`) was deliberately left untouched, matched by
+  member name alone exactly as before. Resolving `x` semantically would only
+  cover the narrow case of a namespace/default import used via member
+  access, and the fixtures exercise this form with `x` never actually
+  imported at all (`Reselect.createSelector(...)` with no `Reselect` import
+  anywhere in the file) — precisely the "don't invent module-resolution
+  logic" boundary this model exists to respect. See
+  `src/rules/reselect_arity_match.rs`'s `is_create_selector_callee` for the
+  exact split.
+
+A small shared helper, `src/rules/reselect.rs`, holds the
+"does this reference resolve to reselect's `createSelector`" check once,
+used by both rules that need it, rather than each re-implementing the same
+`ImportedName::Named("createSelector") && source == "reselect"` match.
+
+This remains the model's only integration surface: it does not gain a
+capability, a new binding kind, or an extra pass to support this — the
+existing `resolve` + `Binding::import()` API was already sufficient. A
+future rule with no legacy ESLint behavior to stay faithful to is still the
+easiest kind of rule to build directly on this model, with no parity
+tradeoff to weigh at all.
 
 ## Tests
 

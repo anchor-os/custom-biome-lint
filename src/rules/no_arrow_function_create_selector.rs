@@ -6,8 +6,10 @@ use biome_rowan::AstNode;
 
 use crate::analyzer::runner::FileContext;
 use crate::diagnostics::{Fix, Violation};
+use crate::rules::reselect::resolves_to_reselect_create_selector;
 use crate::rules::rule::Rule;
 use crate::rules::JS_EXTENSIONS;
+use crate::semantic::SemanticModel;
 
 pub struct NoArrowFunctionCreateSelector;
 
@@ -25,13 +27,14 @@ impl Rule for NoArrowFunctionCreateSelector {
     }
 
     fn check(&self, file: &FileContext) -> Vec<Violation> {
+        let semantic = file.semantic();
         let mut violations = Vec::new();
 
         for node in file.tree().descendants() {
             let Some(arrow) = JsArrowFunctionExpression::cast_ref(&node) else {
                 continue;
             };
-            let Some(call) = bare_create_selector_body(&arrow) else {
+            let Some(call) = bare_create_selector_body(&arrow, semantic) else {
                 continue;
             };
             let Some(declarator) = enclosing_declarator(&arrow) else {
@@ -79,8 +82,16 @@ impl Rule for NoArrowFunctionCreateSelector {
     }
 }
 
-/// The arrow's concise body, if it is exactly `createSelector(...)`.
-fn bare_create_selector_body(arrow: &JsArrowFunctionExpression) -> Option<JsCallExpression> {
+/// The arrow's concise body, if it is exactly a call to reselect's
+/// `createSelector` -- resolved semantically, so a same-named local
+/// function or a `createSelector` imported from a different module
+/// correctly does not match, and an aliased import
+/// (`import { createSelector as selector } from "reselect"`) does, even
+/// though the identifier here is spelled `selector`.
+fn bare_create_selector_body(
+    arrow: &JsArrowFunctionExpression,
+    semantic: &SemanticModel,
+) -> Option<JsCallExpression> {
     let AnyJsFunctionBody::AnyJsExpression(expr) = arrow.body().ok()? else {
         return None;
     };
@@ -90,11 +101,8 @@ fn bare_create_selector_body(arrow: &JsArrowFunctionExpression) -> Option<JsCall
     let AnyJsExpression::JsIdentifierExpression(ident) = call.callee().ok()? else {
         return None;
     };
-    let is_create_selector = ident
-        .name()
-        .and_then(|n| n.value_token())
-        .is_ok_and(|t| t.text_trimmed() == "createSelector");
-    is_create_selector.then_some(call)
+    let reference = ident.name().ok()?;
+    resolves_to_reselect_create_selector(semantic, &reference).then_some(call)
 }
 
 /// The arrow must be the *initializer* of a declarator, matching the original

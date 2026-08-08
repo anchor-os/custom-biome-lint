@@ -294,13 +294,15 @@ Two points worth having here rather than only there:
   `FileContext`'s life, so it costs nothing for a rule that never asks for
   it, and costs exactly once (not once per rule) for a file where multiple
   rules do.
-- **No existing rule uses it yet, deliberately.** All three current rules
-  are exact ESLint-parity ports; the one case where semantic resolution
-  would change a rule's output (`no-native-map`'s shadowed-`Map`-parameter
-  handling) is a case where the *current* behavior is the documented,
-  intentional parity target — see SEMANTIC_MODEL.md's "Why no existing rule
-  uses this yet" for the specifics. This is infrastructure for a future rule
-  that isn't an ESLint port, not a retrofit for the current three.
+- **All three current rules use it.** `no-native-map` resolves `Map`
+  references against it instead of a bespoke file-wide binding-state
+  machine; `no-arrow-function-create-selector` and `reselect-arity-match`
+  resolve a bare `createSelector` callee against it. This was a deliberate,
+  separately-considered migration, not the model's original intent — it
+  first shipped as unused infrastructure specifically *because* using it
+  meant deviating from strict ESLint-output parity on rules built to
+  guarantee that parity. See SEMANTIC_MODEL.md's "Migrating the existing
+  rules" for the full reasoning and exactly what changed.
 
 ## Decision: `ignoreBiomeExtensionRules` in `package.json`
 

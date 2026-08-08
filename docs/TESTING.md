@@ -17,7 +17,7 @@ Plus a one-off portability check documented at the end.
 cargo test
 ```
 
-Expected: **137 passing, 0 failing**, in four suites.
+Expected: **150 passing, 0 failing**, in four suites.
 
 ```text
 Running unittests src/lib.rs
@@ -29,8 +29,8 @@ running 0 tests
 test result: ok. 0 passed
 
 Running tests/integration.rs
-running 52 tests
-test result: ok. 52 passed
+running 65 tests
+test result: ok. 65 passed
 
 Doc-tests custom_biome_lint
 running 1 test
@@ -63,7 +63,7 @@ cargo test --lib suppress
 cargo test --lib file_matcher
 ```
 
-### Integration tests (52, in `tests/integration.rs`)
+### Integration tests (65, in `tests/integration.rs`)
 
 These drive the public API — mostly `lint_source`, which runs the full
 parse → check → suppression-filter pipeline, the same path the CLI uses. The
@@ -73,9 +73,9 @@ drives `FileContext::semantic()` directly.
 
 | Module | Count | What it covers |
 | --- | --- | --- |
-| `no_native_map` | 7 | Native `Map` reported; Immutable named import, namespace-plus-destructure, and `require` alias all allowed; `Map` from an unrelated module still reported; suppressions work; edge cases produce exactly the documented violations |
-| `reselect_arity_match` | 5 | Mismatched arity reported, matching arity allowed, member-expression callee (`reselect.createSelector`) checked, suppressions work, edge cases flag only the namespaced mismatch |
-| `no_arrow_function_create_selector` | 5 | Wrapped `createSelector` reported with a fix attached, direct call and `make*` factory allowed, suppressions work, edge cases flag only the non-factory `make`-prefixed name, an `async` wrapper is reported but left without a fix |
+| `no_native_map` | 12 | Native `Map` reported; Immutable named/default/aliased import, namespace-plus-destructure, and `require` alias all allowed; `Map` from an unrelated module still reported; suppressions work; edge cases produce exactly the documented violations; a parameter shadowing a real Immutable import is reported as native (the semantic-migration fix); nested-block shadowing resolves each reference independently; a local `Map` unrelated to Immutable is still reported |
+| `reselect_arity_match` | 9 | Mismatched arity reported, matching arity allowed, member-expression callee (`reselect.createSelector`) checked, suppressions work, edge cases flag only the namespaced mismatch; an aliased reselect import is checked; a same-named local function and a `createSelector` from another module are not treated as reselect; a shadowing parameter is not treated as reselect |
+| `no_arrow_function_create_selector` | 9 | Wrapped `createSelector` reported with a fix attached, direct call and `make*` factory allowed, suppressions work, edge cases flag only the non-factory `make`-prefixed name, an `async` wrapper is reported but left without a fix; an aliased reselect import is recognized; a same-named local function, a `createSelector` from another module, and a shadowing parameter are not treated as reselect |
 | `semantic_model` | 20 | Basic declarations, function parameters, nested-scope shadowing, all four import forms and their source/imported/local fields, a parameter and a local redeclaration each shadowing a same-named import, object/array destructuring (including a computed key as a reference), arrow parameters, block scope, catch scope, a switch statement's cases sharing one block scope, `var` hoisting out of a nested block, a `let` scoped to a `for` loop head, the scope parent-chain hierarchy |
 | `patterns` | 4 | Bare directory expands to a brace glob, bare directory discovers every fixture, explicit glob passed through unchanged, `node_modules` never walked |
 | `cli_behavior` | 4 | `--format json` still emits a document when every rule is disabled; `--auto-fix` unwraps the arrow and relints clean; `--auto-fix --dry-run` leaves the file untouched; `--write-fix` and `--auto-fix` together is rejected |
@@ -158,7 +158,7 @@ cargo build --release
 ./target/release/custom-biome-lint fixtures
 ```
 
-Expected output — **12 errors in 6 files**, exit code 1:
+Expected output — **11 errors in 6 files**, exit code 1:
 
 ```text
 fixtures/no_arrow_function_create_selector/edge-cases.js
@@ -169,9 +169,8 @@ fixtures/no_arrow_function_create_selector/invalid.js
   12:32  error  Avoid wrapping createSelector in an arrow function for "selectFirstUser". ...     no-arrow-function-create-selector
 
 fixtures/no_native_map/edge-cases.js
-  7:26   error  Use Immutable.js Map instead of native Map.  no-native-map
-  12:25  error  Use Immutable.js Map instead of native Map.  no-native-map
-  13:14  error  Use Immutable.js Map instead of native Map.  no-native-map
+  4:26   error  Use Immutable.js Map instead of native Map.  no-native-map
+  12:14  error  Use Immutable.js Map instead of native Map.  no-native-map
 
 fixtures/no_native_map/invalid.js
   3:26  error  Use Immutable.js Map instead of native Map.  no-native-map
@@ -185,7 +184,7 @@ fixtures/reselect_arity_match/invalid.js
   10:64  error  createSelector expects 1 parameter(s) in the result function, but found 2.  reselect-arity-match
   13:76  error  createSelector expects 2 parameter(s) in the result function, but found 1.  reselect-arity-match
 
-✖ 12 errors in 6 files
+✖ 11 errors in 6 files
 ```
 
 `invalid.js` and `edge-cases.js` are the only files that ever appear — each
