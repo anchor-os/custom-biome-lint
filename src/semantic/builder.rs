@@ -28,8 +28,8 @@ use biome_js_syntax::{
     JsClassDeclaration, JsDefaultImportSpecifier, JsForInStatement, JsForOfStatement,
     JsForStatement, JsForVariableDeclaration, JsFunctionDeclaration, JsFunctionExpression,
     JsImport, JsInitializerClause, JsNamedImportSpecifiers, JsNamespaceImportSpecifier,
-    JsParameters, JsReferenceIdentifier, JsSyntaxKind, JsSyntaxNode, JsVariableDeclaration,
-    JsVariableDeclarator,
+    JsParameters, JsReferenceIdentifier, JsSwitchStatement, JsSyntaxKind, JsSyntaxNode,
+    JsVariableDeclaration, JsVariableDeclarator,
 };
 use biome_rowan::{AstNode, AstSeparatedList};
 
@@ -152,6 +152,11 @@ impl Builder {
                 let block_scope = self.push_scope(ScopeKind::Block, Some(scope));
                 self.walk_children(node, block_scope);
             }
+            JsSyntaxKind::JS_SWITCH_STATEMENT => {
+                if let Some(stmt) = JsSwitchStatement::cast_ref(node) {
+                    self.handle_switch_statement(&stmt, scope);
+                }
+            }
             JsSyntaxKind::JS_CATCH_CLAUSE => {
                 if let Some(clause) = JsCatchClause::cast_ref(node) {
                     self.handle_catch_clause(&clause, scope);
@@ -237,6 +242,14 @@ impl Builder {
                         AnyJsObjectBindingPatternMember::JsObjectBindingPatternProperty(
                             property,
                         ) => {
+                            // A computed key (`{ [key]: value }`) is itself
+                            // an expression that can reference an outer
+                            // binding; a literal key (`{ foo: value }`) has
+                            // no reference to record, so walking it here is
+                            // a harmless no-op.
+                            if let Ok(member) = property.member() {
+                                self.walk(member.syntax(), ref_scope);
+                            }
                             if let Ok(nested) = property.pattern() {
                                 self.collect_pattern_bindings(
                                     &nested,
@@ -448,6 +461,21 @@ impl Builder {
             for statement in body.statements() {
                 self.walk(statement.syntax(), catch_scope);
             }
+        }
+    }
+
+    /// All of a `switch`'s case clauses share one block scope -- a `let`
+    /// declared in one case is visible in the others, per real JS
+    /// semantics, since there's no block around each case body. The
+    /// discriminant is evaluated before that scope exists, so it's walked
+    /// in the outer scope instead.
+    fn handle_switch_statement(&mut self, stmt: &JsSwitchStatement, scope: ScopeId) {
+        if let Ok(discriminant) = stmt.discriminant() {
+            self.walk(discriminant.syntax(), scope);
+        }
+        let switch_scope = self.push_scope(ScopeKind::Block, Some(scope));
+        for case in stmt.cases() {
+            self.walk(case.syntax(), switch_scope);
         }
     }
 

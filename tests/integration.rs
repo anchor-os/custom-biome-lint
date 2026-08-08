@@ -641,6 +641,24 @@ mod semantic_model {
     }
 
     #[test]
+    fn a_computed_destructuring_key_is_a_reference() {
+        let file = parse("const key = \"foo\";\nconst { [key]: value } = obj;\nvalue;\n");
+        let model = file.semantic();
+
+        // `key` inside `[key]` must resolve to the outer `const key`, not be
+        // silently dropped because the property's key expression was never
+        // walked for references.
+        let key_reference = nth_reference(&file, "key", 0);
+        let key_binding = model
+            .resolve(&key_reference)
+            .expect("computed key must be resolvable");
+        assert_eq!(key_binding.kind, BindingKind::Const);
+
+        let value_binding = model.resolve(&nth_reference(&file, "value", 0)).unwrap();
+        assert_eq!(value_binding.kind, BindingKind::Const);
+    }
+
+    #[test]
     fn arrow_function_parameter_is_bound() {
         let file = parse("const test = foo => foo;\n");
         let model = file.semantic();
@@ -693,6 +711,28 @@ mod semantic_model {
         let binding = model.resolve(&nth_reference(&file, "i", 0)).unwrap();
         assert_eq!(binding.kind, BindingKind::Let);
         assert_eq!(model.scope(binding.scope).kind(), ScopeKind::Loop);
+    }
+
+    #[test]
+    fn a_switch_statement_shares_one_block_scope_across_every_case() {
+        let file = parse(
+            "function test(x) {\n    switch (x) {\n        case 1: {\n            const foo = 1;\n            use(foo);\n            break;\n        }\n        case 2:\n            let bar = 2;\n            use(bar);\n            break;\n    }\n}\n",
+        );
+        let model = file.semantic();
+
+        // `bar`, declared directly in a case body (no braces around it), is
+        // scoped to the whole switch -- not the enclosing function -- per
+        // real JS semantics.
+        let bar = model.resolve(&nth_reference(&file, "bar", 0)).unwrap();
+        assert_eq!(bar.kind, BindingKind::Let);
+        assert_eq!(model.scope(bar.scope).kind(), ScopeKind::Block);
+
+        // `foo`, inside its own `{ }` case block, gets a nested block scope
+        // as usual, one level further in than the switch's own scope.
+        let foo = model.resolve(&nth_reference(&file, "foo", 0)).unwrap();
+        assert_eq!(foo.kind, BindingKind::Const);
+        assert_eq!(model.scope(foo.scope).kind(), ScopeKind::Block);
+        assert_eq!(model.scope(foo.scope).parent(), Some(bar.scope));
     }
 
     #[test]

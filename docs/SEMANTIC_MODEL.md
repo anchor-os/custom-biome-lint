@@ -60,11 +60,11 @@ per file (see [`ScopeKind`](../src/semantic/scope.rs)):
 | --- | --- |
 | `Global` | The whole file (exactly one, the tree root) |
 | `Function` | A function declaration, function expression, or arrow function — holds its parameters *and* its body's own declarations, not split into two layers |
-| `Block` | A bare `{ ... }`, or an if/loop/try body block that isn't itself a function body |
+| `Block` | A bare `{ ... }`, an if/loop/try body block that isn't itself a function body, or a `switch` statement's cases, which all share one such scope (there's no block around each case body) |
 | `Loop` | A `for`/`for-in`/`for-of` head, holding the loop's own declared variable |
 | `Catch` | A `catch (name) { ... }` clause, holding the caught binding |
 
-Seven binding kinds (see [`BindingKind`](../src/semantic/binding.rs)): `Var`,
+Eight binding kinds (see [`BindingKind`](../src/semantic/binding.rs)): `Var`,
 `Let`, `Const`, `Function`, `Class`, `Parameter`, `CatchParameter`, and
 `Import(ImportBinding)`. Each [`Binding`](../src/semantic/binding.rs) records
 its name, kind, owning scope, and the byte offset it was declared at (feed
@@ -154,6 +154,8 @@ shadowing (module → function → block, each level restoring correctly on the
 way back out), all four import forms (default, named, aliased named,
 namespace) and their `source`/`imported`/`local` fields, a parameter and a
 local redeclaration each correctly shadowing an import of the same name,
-object and array destructuring, arrow function parameters, block scope,
-catch scope, `var` hoisting out of a nested block, a `let` scoped to a `for`
-loop head, and the scope parent-chain hierarchy.
+object and array destructuring (including a computed key, `{ [key]: value }`,
+as a reference in its own right), arrow function parameters, block scope,
+catch scope, a `switch` statement's cases sharing one block scope, `var`
+hoisting out of a nested block, a `let` scoped to a `for` loop head, and the
+scope parent-chain hierarchy.
