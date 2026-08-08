@@ -17,12 +17,12 @@ Plus a one-off portability check documented at the end.
 cargo test
 ```
 
-Expected: **113 passing, 0 failing**, in four suites.
+Expected: **116 passing, 0 failing**, in four suites.
 
-```
+```text
 Running unittests src/lib.rs
-running 80 tests
-test result: ok. 80 passed
+running 83 tests
+test result: ok. 83 passed
 
 Running unittests src/bin/custom-biome-lint.rs
 running 0 tests
@@ -41,14 +41,14 @@ The binary suite reporting 0 tests is expected — `src/bin/custom-biome-lint.rs
 7 lines that delegate to `cli::run()`, so everything is tested through the
 library.
 
-### Unit tests (80, in `src/`)
+### Unit tests (83, in `src/`)
 
 Colocated `#[cfg(test)]` modules testing components in isolation.
 
 | Module | Count | What it covers |
 | --- | --- | --- |
 | `analyzer::file_matcher` | 8 | Glob semantics: `*` staying within a segment, `**` spanning directories, `?`, brace expansion, extension collection from alternatives, `root_dir()` stopping at the first wildcard |
-| `autofix` | 9 | A single fix applied, a violation with no `Fix` left as skipped rather than dropped, overlapping fixes only applying the first, a fix that would break parsing rejected before writing, invalid fix ranges (reversed, past the end, splitting a UTF-8 code point) rejected without panicking, a file changed on disk since analysis skipped rather than rewritten at stale offsets, dry run vs write behaviour |
+| `autofix` | 12 | A single fix applied, a violation with no `Fix` left as skipped rather than dropped, overlapping fixes only applying the first, a fix that would break parsing rejected before writing, invalid fix ranges (reversed, past the end, splitting a UTF-8 code point) rejected without panicking, a file changed on disk since analysis skipped rather than rewritten at stale offsets, atomic writes surviving a mid-write error, exclusive temp-file creation refusing a pre-existing symlink, dry run vs write behaviour |
 | `cache` | 9 | Content-hash cache creation, marking/saving, content changes invalidating regardless of mtime, identical content staying valid after a rewrite, cache-key (rule set + version) changes invalidating, disk round-trip, corrupted-cache recovery, old mtime-format entries silently ignored |
 | `cli::args` | 20 | Quiet defaults, repeated `-v`, verbosity saturating at 3, clustered short flags (`-vd`), positional pattern, rejection of unknown flags and duplicate positionals, `--write-fix`/`--auto-fix` defaulting to writing, `--dry-run` requiring one of them, `--write-fix` and `--auto-fix` rejected together, `--format` parsing and its rejection alongside `--write-fix`/`--auto-fix` |
 | `config::package_config` | 7 | Missing `package.json`, legacy array form, object form with `off`/`warn`/`error`, malformed entries warning and being skipped |

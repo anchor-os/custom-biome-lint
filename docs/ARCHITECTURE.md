@@ -556,22 +556,40 @@ wrapper) is pure for the same testability reason as `fixer::plan_file`:
    skipped (`"applying the fix would leave the file unparseable"`) and the
    original source is returned unchanged.
 
-Two more checks live in `Autofix::apply` itself, above `plan_file`:
+Three more checks live in `Autofix::apply` itself, above `plan_file`:
 
-- **Stale-offset detection.** `Fix` offsets are only valid against the exact
-  source they were computed from. `apply` takes that source alongside the
-  violations and compares it against a fresh read of the file; if they no
-  longer match — something else wrote to the file between analysis and here
-  — every violation for that file is skipped
+- **Stale-offset detection, checked twice.** `Fix` offsets are only valid
+  against the exact source they were computed from. `apply` takes that
+  source alongside the violations and compares it against a fresh read of
+  the file before planning, and again immediately before the write — if
+  either comparison fails, every violation for that file is skipped
   (`"file changed on disk since it was analyzed"`) rather than splicing old
   offsets into new content, which would still parse cleanly while rewriting
-  the wrong bytes.
+  the wrong bytes. **This narrows the race but does not close it.** Between
+  the second read and the rename below there is still a gap — however
+  small — in which another process could write the file; this tool accepts
+  that residual risk rather than adding OS-level file locking (`flock` isn't
+  uniformly available across the platforms this tool runs on without a new
+  dependency, which the portability decision below rules out for a risk this
+  narrow) or a lockfile protocol (which only protects other cooperating
+  invocations of this same tool, not an arbitrary third-party writer). The
+  assumption is the ordinary one for a lint tool: it runs against a
+  developer's own checkout or a CI job's own workspace, not a filesystem with
+  untrusted concurrent writers to the exact files being fixed.
 - **Atomic writes.** Writing is a temp file in the same directory followed by
   a rename, not a direct `fs::write` to the target. `fs::write` truncates its
   target before writing the replacement; a process kill or full disk mid-write
   would otherwise leave a half-written source file. The rename is atomic on
   the same filesystem, so the destination is either the old content or the
   new content, never a partial write.
+- **Exclusive temp-file creation.** The temp file is created with
+  `OpenOptions::create_new` (`O_EXCL`), not `fs::write`. `fs::write` creates
+  the file if absent but otherwise opens whatever is already at that path —
+  including following a symlink — and truncates it. In a directory another
+  process can write to, that process could plant a symlink at the exact
+  predictable temp name pointing anywhere; `create_new` fails on a path that
+  already exists (symlink or not) instead of following it, so the retry loop
+  picks a different name rather than writing through someone else's symlink.
 
 Like `Fixer::apply_suppressions`, `Autofix::apply` reads and writes each file
 independently and records per-file IO errors in `AutofixReport::failures`

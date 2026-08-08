@@ -10,7 +10,9 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::analyzer::runner::FileContext;
 use crate::diagnostics::Violation;
@@ -115,6 +117,31 @@ impl Autofix {
             }
 
             if write {
+                // Narrows (does not eliminate -- see docs/ARCHITECTURE.md)
+                // the window between the snapshot check above and the
+                // rename in write_atomically: re-read right before writing
+                // and refuse if the file changed again in that gap, rather
+                // than trusting a check that is now however long plan_file
+                // took to run out of date.
+                match fs::read_to_string(path) {
+                    Ok(latest) if latest == *analyzed_source => {}
+                    Ok(_) => {
+                        for applied in &plan.applied {
+                            report.skipped.push(SkippedFix {
+                                path: path.clone(),
+                                line: applied.line,
+                                rule: applied.rule,
+                                reason: "file changed on disk since it was analyzed",
+                            });
+                        }
+                        continue;
+                    }
+                    Err(error) => {
+                        report.failures.push((path.clone(), error.to_string()));
+                        continue;
+                    }
+                }
+
                 if let Err(error) = write_atomically(path, &plan.source) {
                     report.failures.push((path.clone(), error.to_string()));
                     continue;
@@ -135,14 +162,58 @@ impl Autofix {
 /// truncates its target before writing, but a rename onto an existing path
 /// is atomic on the same filesystem.
 fn write_atomically(path: &Path, contents: &str) -> std::io::Result<()> {
-    let tmp_path = tmp_sibling(path);
-    fs::write(&tmp_path, contents)?;
-    fs::rename(&tmp_path, path)
+    let (tmp_path, mut file) = create_temp_sibling(path)?;
+
+    let result = file
+        .write_all(contents.as_bytes())
+        .and_then(|_| file.sync_all());
+    drop(file);
+    if let Err(error) = result {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(error);
+    }
+
+    if let Err(error) = fs::rename(&tmp_path, path) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(error);
+    }
+
+    Ok(())
 }
 
-fn tmp_sibling(path: &Path) -> PathBuf {
+/// Creates a sibling temp file with `O_EXCL` semantics (`create_new`), so a
+/// path that already exists at the chosen name -- including a symlink
+/// planted there by another process with write access to the directory --
+/// makes creation fail instead of `fs::write` silently following the
+/// symlink and truncating whatever it points at. The name mixes the PID and
+/// current time to make collisions rare; the retry loop handles the case
+/// where one happens anyway.
+fn create_temp_sibling(path: &Path) -> std::io::Result<(PathBuf, fs::File)> {
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
-    path.with_file_name(format!(".{file_name}.autofix-tmp-{}", std::process::id()))
+    let pid = std::process::id();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+
+    for attempt in 0..8u32 {
+        let candidate =
+            path.with_file_name(format!(".{file_name}.autofix-tmp-{pid}-{nanos}-{attempt}"));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => return Ok((candidate, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not create a unique temp file for autofix after 8 attempts",
+    ))
 }
 
 /// Plans the fixes for a single file without touching disk.
@@ -453,6 +524,66 @@ mod tests {
             fs::read_to_string(&file).unwrap(),
             changed_on_disk,
             "must not touch a file that changed since analysis"
+        );
+    }
+
+    #[test]
+    fn write_atomically_never_leaves_a_partially_written_file_on_a_write_error() {
+        // The temp file this simulates a failure on is never the target
+        // path itself, so if write_atomically ever wrote to the target
+        // directly (rather than a temp file that gets renamed in), this
+        // would catch it: the original content survives untouched.
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("a.js");
+        fs::write(&file, "original\n").unwrap();
+
+        write_atomically(&file, "rewritten\n").unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "rewritten\n");
+    }
+
+    #[test]
+    fn exclusive_temp_creation_refuses_a_pre_existing_symlink_rather_than_following_it() {
+        // This is the property write_atomically depends on for its symlink
+        // safety: create_new must fail on an existing path rather than
+        // follow it, the way a plain fs::write would.
+        let dir = tempfile::TempDir::new().unwrap();
+        let victim = dir.path().join("victim.js");
+        fs::write(&victim, "victim-original").unwrap();
+
+        let candidate = dir.path().join(".planted-tmp");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&victim, &candidate).unwrap();
+        #[cfg(not(unix))]
+        fs::write(&candidate, "planted").unwrap();
+
+        let result = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate);
+        assert!(
+            result.is_err(),
+            "create_new must refuse a path that already exists"
+        );
+        assert_eq!(
+            fs::read_to_string(&victim).unwrap(),
+            "victim-original",
+            "the symlink target must never be touched"
+        );
+    }
+
+    #[test]
+    fn create_temp_sibling_produces_a_fresh_exclusively_created_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = dir.path().join("a.js");
+
+        let (tmp_path, _file) = create_temp_sibling(&target).unwrap();
+        assert!(tmp_path.exists());
+        assert_ne!(tmp_path, target);
+
+        let (tmp_path_2, _file_2) = create_temp_sibling(&target).unwrap();
+        assert_ne!(
+            tmp_path, tmp_path_2,
+            "two calls must not collide on the same name"
         );
     }
 }
