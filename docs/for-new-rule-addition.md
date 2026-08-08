@@ -34,7 +34,7 @@ All of the following must be true before you claim the task is done:
 
 | Gate | Command | Expected |
 | --- | --- | --- |
-| Tests pass | `cargo test` | 84 unit + 65 integration + 1 doc-test pass **before** your change; your new tests are additive |
+| Tests pass | `cargo test` | 84 unit + 67 integration + 1 doc-test pass **before** your change; your new tests are additive |
 | No lint warnings | `cargo clippy --all-targets` | zero warnings |
 | Release builds | `cargo build --release` | succeeds |
 | Fixtures behave | `./target/release/custom-biome-lint fixtures` | your rule reports `invalid.js`, stays silent on `valid.js` and `suppressed.js` |
@@ -95,9 +95,9 @@ file.semantic()        // &SemanticModel — lexical scopes/bindings, built lazi
 
 | Rule | File | AST techniques worth copying |
 | --- | --- | --- |
-| `no-native-map` | `src/rules/no_native_map.rs` | Import/`require` tracking, destructuring patterns, **stateful** traversal — accumulates `ImmutableBindings` while walking, relying on `descendants()` being preorder so a declaration is seen before its uses |
-| `no-arrow-function-create-selector` | `src/rules/no_arrow_function_create_selector.rs` | Arrow functions, walking *up* to a parent declarator |
-| `reselect-arity-match` | `src/rules/reselect_arity_match.rs` | Call expressions, identifier vs member callees, parameter-list arity |
+| `no-native-map` | `src/rules/no_native_map.rs` | Import/`require` tracking, destructuring patterns, and **semantic resolution** — a forward pass over declarators builds two `HashSet<usize>` offset sets (which bindings represent the `immutable` module vs. its `Map` export) via `file.semantic()`, then every `Map` reference is checked against those sets independently, so shadowing resolves correctly |
+| `no-arrow-function-create-selector` | `src/rules/no_arrow_function_create_selector.rs` | Arrow functions, walking *up* to a parent declarator, and resolving the callee against `import { createSelector } from "reselect"` via the shared helper in `src/rules/reselect.rs` |
+| `reselect-arity-match` | `src/rules/reselect_arity_match.rs` | Call expressions, identifier vs member callees, parameter-list arity; the identifier callee is resolved semantically (same shared helper), the member-expression callee deliberately stays name-based |
 
 The shape they all share:
 
@@ -196,7 +196,9 @@ const MESSAGE: &str =
     "Avoid await inside a loop; collect the promises and await Promise.all instead.";
 
 // Unit struct — a rule holds no state between files. Per-file state lives in
-// check() (see ImmutableBindings in no_native_map.rs).
+// check() (see the ImmutableAliases offset sets built once per call in
+// no_native_map.rs, or the pending_refs/resolutions built once per file in
+// semantic/builder.rs, for the shape this usually takes).
 pub struct NoAwaitInLoop;
 
 impl Rule for NoAwaitInLoop {

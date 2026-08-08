@@ -477,9 +477,10 @@ binding declared later in the same scope still resolves correctly.
 | --- | --- |
 | `rule.rs` (27 lines) | The `Rule` trait |
 | `registry.rs` | `RuleRegistry` — the list of all rules, plus config filtering |
-| `no_native_map.rs` (298 lines) | Immutable.js `Map` rule |
-| `no_arrow_function_create_selector.rs` (120 lines) | Memoization rule |
-| `reselect_arity_match.rs` (115 lines) | Arity rule |
+| `no_native_map.rs` (324 lines) | Immutable.js `Map` rule |
+| `no_arrow_function_create_selector.rs` (144 lines) | Memoization rule |
+| `reselect_arity_match.rs` (127 lines) | Arity rule |
+| `reselect.rs` | Shared "does this resolve to reselect's `createSelector`" check |
 | `mod.rs` | Re-exports, `JS_EXTENSIONS` constant |
 
 The trait is `Send + Sync` so a future parallel implementation over files needs
@@ -492,13 +493,20 @@ registry is the union across rules, and `default_pattern()` derives
 no `default_pattern()`, since the CLI's default glob is a property of the whole
 registered rule set, not of any single rule.
 
-`no_native_map.rs` is by far the largest rule because it is the only stateful
-one: it must track how `immutable` entered the file (default import, named
-import, `require`, destructuring, namespace alias) before it can decide whether
-a bare `Map` is native. It relies on `descendants()` being preorder, so a
-declaration is seen before the identifiers inside it — the same order the
-original ESLint rule's visitors fire in. See [RULES.md](RULES.md) for the
-detection details and the known false-positive class.
+`no_native_map.rs` is by far the largest rule because it resolves the most
+import/alias forms against `file.semantic()`: named, default, and namespace
+imports, plus `require('immutable')` and locals derived from any of those via
+destructuring or member access. A single forward pass over
+`declarators()` builds two small `HashSet<usize>`s of binding-declaration
+offsets — which bindings represent the whole `immutable` module, and which
+represent its `Map` export — using semantic resolution rather than an ad hoc
+scan; every `Map` reference in the file is then checked against those sets
+independently, so shadowing (a parameter or local named `Map`) resolves
+correctly instead of being masked by a single file-wide flag. See
+[RULES.md](RULES.md) for the detection details, the known false-positive
+class, and [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md#migrating-the-existing-rules)
+for why this replaced the rule's original bespoke `ImmutableBindings` state
+machine.
 
 ### `src/suppress/`
 

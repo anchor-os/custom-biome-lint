@@ -34,7 +34,7 @@ including one known false-positive class, are in [docs/RULES.md](docs/RULES.md).
 | [docs/MIGRATION_NOTES.md](docs/MIGRATION_NOTES.md) | The 8 suppression comments still to translate |
 | [docs/INCREMENTAL_CACHING_DOCUMENT.md](docs/INCREMENTAL_CACHING_DOCUMENT.md) | How the content-hash cache works, and why it replaced mtime |
 | [docs/BENCHMARKING.md](docs/BENCHMARKING.md) | Re-runnable performance harness (`scripts/benchmark.sh`) and current numbers |
-| [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md) | Lexical scope/binding model and identifier resolution: design, limitations, why no rule uses it yet |
+| [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md) | Lexical scope/binding model and identifier resolution: design, limitations, how the three rules use it |
 
 ## Build
 
@@ -359,12 +359,12 @@ them or loosen the pins** — see
 ## Testing
 
 ```sh
-cargo test                                    # 150 tests: 84 unit + 65 integration + 1 doctest
+cargo test                                    # 152 tests: 84 unit + 67 integration + 1 doctest
 cargo fmt --all -- --check                    # no diff expected
 cargo clippy --all-targets -- -D warnings     # no warnings expected
 cargo audit                                   # no advisories beyond .cargo/audit.toml's ignore list
 cargo deny check                              # licenses, bans, sources all ok
-./target/release/custom-biome-lint fixtures   # 12 errors across 6 files
+./target/release/custom-biome-lint fixtures   # 11 errors across 6 files
 ```
 
 Full procedure, including running against the real dashboard tree and how the

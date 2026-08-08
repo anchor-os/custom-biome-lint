@@ -148,6 +148,18 @@ mod no_native_map {
     }
 
     #[test]
+    fn destructuring_directly_off_a_require_call_is_recognized() {
+        let source = "const { Map } = require('immutable');\nconst m = new Map();\n";
+        assert!(check_source("no-native-map", source, Path::new("a.js")).is_empty());
+    }
+
+    #[test]
+    fn member_access_directly_off_a_require_call_is_recognized() {
+        let source = "const M = require('immutable').Map;\nconst m = new M();\n";
+        assert!(check_source("no-native-map", source, Path::new("a.js")).is_empty());
+    }
+
+    #[test]
     fn an_aliased_named_import_is_recognized() {
         let source =
             "import { Map as ImmutableMap } from 'immutable';\nconst m = new ImmutableMap();\n";

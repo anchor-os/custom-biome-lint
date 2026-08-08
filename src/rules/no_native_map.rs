@@ -105,29 +105,26 @@ impl ImmutableAliases {
         // `const Immutable = require('immutable')` -- the semantic model
         // only tracks ES `import`s, so a CommonJS `require` alias is
         // classified here directly rather than by resolving anything.
+        // Deliberately not an early return: the same `require(...)` call
+        // can simultaneously be destructured below (`const { Map } =
+        // require('immutable')`), which needs the same expression checked
+        // again by `expression_represents_module`.
         if is_require_immutable_call(&expression) {
             if let Some(offset) = declared_identifier_offset(declarator) {
                 self.module.insert(offset);
             }
-            return;
         }
 
-        // `const { Map } = Immutable` / `const { Map } = require('immutable')`.
-        if let AnyJsExpression::JsIdentifierExpression(ident) = &expression {
-            if let Ok(reference) = ident.name() {
-                if self.resolves_to_module(semantic, &reference) {
-                    if let Ok(AnyJsBindingPattern::JsObjectBindingPattern(pattern)) =
-                        declarator.id()
-                    {
-                        if let Some(offset) = object_pattern_map_offset(&pattern) {
-                            self.map.insert(offset);
-                        }
-                    }
+        // `const { Map } = Immutable`, `const { Map } = require('immutable')`.
+        if self.expression_represents_module(semantic, &expression) {
+            if let Ok(AnyJsBindingPattern::JsObjectBindingPattern(pattern)) = declarator.id() {
+                if let Some(offset) = object_pattern_map_offset(&pattern) {
+                    self.map.insert(offset);
                 }
             }
         }
 
-        // `const M = Immutable.Map` / `const M = require('immutable').Map`.
+        // `const M = Immutable.Map`, `const M = require('immutable').Map`.
         if let AnyJsExpression::JsStaticMemberExpression(member) = &expression {
             if self.member_is_immutable_map(semantic, member) {
                 if let Some(offset) = declared_identifier_offset(declarator) {
@@ -137,15 +134,26 @@ impl ImmutableAliases {
         }
     }
 
-    /// Whether `reference` resolves to a binding that itself represents the
-    /// whole `immutable` module (a default/namespace import, or a
-    /// previously classified `require('immutable')` alias).
-    fn resolves_to_module(
+    /// Whether `expression` itself evaluates to the whole `immutable`
+    /// module -- either a direct `require('immutable')` call, or a
+    /// reference resolving to a binding that represents the module (a
+    /// default/namespace import, or a previously classified
+    /// `require('immutable')` alias).
+    fn expression_represents_module(
         &self,
         semantic: &SemanticModel,
-        reference: &JsReferenceIdentifier,
+        expression: &AnyJsExpression,
     ) -> bool {
-        let Some(binding) = semantic.resolve(reference) else {
+        if is_require_immutable_call(expression) {
+            return true;
+        }
+        let AnyJsExpression::JsIdentifierExpression(ident) = expression else {
+            return false;
+        };
+        let Ok(reference) = ident.name() else {
+            return false;
+        };
+        let Some(binding) = semantic.resolve(&reference) else {
             return false;
         };
         self.binding_is_module(binding)
@@ -177,13 +185,10 @@ impl ImmutableAliases {
         if !is_map_member {
             return false;
         }
-        let Ok(AnyJsExpression::JsIdentifierExpression(ident)) = member.object() else {
+        let Ok(object) = member.object() else {
             return false;
         };
-        let Ok(reference) = ident.name() else {
-            return false;
-        };
-        self.resolves_to_module(semantic, &reference)
+        self.expression_represents_module(semantic, &object)
     }
 
     /// Whether a "Map" reference resolves to something this file has
