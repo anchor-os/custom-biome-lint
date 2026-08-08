@@ -1,0 +1,696 @@
+//! Builds a [`SemanticModel`] with a single recursive walk over the syntax
+//! tree, dispatching by [`JsSyntaxKind`] rather than casting every node type
+//! the tree could contain. Any node kind not explicitly handled below just
+//! recurses into its children unchanged (`walk`'s `_` arm) -- this is what
+//! lets the walk reach arrow functions or blocks nested arbitrarily deep
+//! inside expressions, JSX, or anything else without a case for every
+//! possible container.
+//!
+//! Two passes, not one: while walking, every reference identifier is
+//! recorded as `(offset, scope, name)` in `pending_refs` rather than
+//! resolved immediately. Resolution happens once, after the whole tree (and
+//! so every scope's full set of bindings) is known. Resolving eagerly
+//! during the walk would get forward references wrong -- a function that
+//! calls another function declared later in the same scope, or a variable
+//! referenced before a `var` declared later in the same block -- since the
+//! later binding wouldn't exist yet at the point the reference is visited.
+//! This intentionally does not model the finer-grained *temporal dead
+//! zone* distinction between `var`/function hoisting and `let`/`const`;
+//! see docs/SEMANTIC_MODEL.md.
+
+use std::collections::HashMap;
+
+use biome_js_syntax::{
+    AnyJsArrayBindingPatternElement, AnyJsArrowFunctionParameters, AnyJsBinding,
+    AnyJsBindingPattern, AnyJsCombinedSpecifier, AnyJsForInOrOfInitializer, AnyJsForInitializer,
+    AnyJsFormalParameter, AnyJsFunctionBody, AnyJsImportClause, AnyJsNamedImportSpecifier,
+    AnyJsObjectBindingPatternMember, AnyJsParameter, JsArrowFunctionExpression, JsCatchClause,
+    JsClassDeclaration, JsDefaultImportSpecifier, JsForInStatement, JsForOfStatement,
+    JsForStatement, JsForVariableDeclaration, JsFunctionDeclaration, JsFunctionExpression,
+    JsImport, JsInitializerClause, JsNamedImportSpecifiers, JsNamespaceImportSpecifier,
+    JsParameters, JsReferenceIdentifier, JsSyntaxKind, JsSyntaxNode, JsVariableDeclaration,
+    JsVariableDeclarator,
+};
+use biome_rowan::{AstNode, AstSeparatedList};
+
+use super::binding::{Binding, BindingId, BindingKind, ImportBinding, ImportedName};
+use super::scope::{Scope, ScopeId, ScopeKind};
+use super::SemanticModel;
+
+pub(super) fn build(root: &JsSyntaxNode) -> SemanticModel {
+    let mut builder = Builder::default();
+    let global = builder.push_scope(ScopeKind::Global, None);
+    builder.walk(root, global);
+    builder.finish(global)
+}
+
+#[derive(Default)]
+struct Builder {
+    scopes: Vec<Scope>,
+    bindings: Vec<Binding>,
+    pending_refs: Vec<(usize, ScopeId, String)>,
+}
+
+impl Builder {
+    fn push_scope(&mut self, kind: ScopeKind, parent: Option<ScopeId>) -> ScopeId {
+        let id = ScopeId(self.scopes.len());
+        self.scopes.push(Scope {
+            kind,
+            parent,
+            bindings: HashMap::new(),
+        });
+        id
+    }
+
+    fn add_binding(&mut self, scope: ScopeId, name: String, kind: BindingKind, declared_at: usize) {
+        let id = BindingId(self.bindings.len());
+        self.bindings.push(Binding {
+            name: name.clone(),
+            kind,
+            scope,
+            declared_at,
+        });
+        self.scopes[scope.0].bindings.insert(name, id);
+    }
+
+    /// `var` hoists to the nearest enclosing function or global scope,
+    /// skipping any block/loop/catch scopes in between.
+    fn hoist_target(&self, mut scope: ScopeId) -> ScopeId {
+        loop {
+            match self.scopes[scope.0].kind {
+                ScopeKind::Function | ScopeKind::Global => return scope,
+                ScopeKind::Block | ScopeKind::Loop | ScopeKind::Catch => {
+                    match self.scopes[scope.0].parent {
+                        Some(parent) => scope = parent,
+                        None => return scope,
+                    }
+                }
+            }
+        }
+    }
+
+    fn finish(self, global: ScopeId) -> SemanticModel {
+        let mut resolutions = HashMap::with_capacity(self.pending_refs.len());
+        for (offset, scope, name) in &self.pending_refs {
+            let mut current = Some(*scope);
+            while let Some(id) = current {
+                if let Some(binding_id) = self.scopes[id.0].bindings.get(name) {
+                    resolutions.insert(*offset, *binding_id);
+                    break;
+                }
+                current = self.scopes[id.0].parent;
+            }
+        }
+        SemanticModel {
+            scopes: self.scopes,
+            bindings: self.bindings,
+            global,
+            resolutions,
+        }
+    }
+
+    // ---- generic traversal ----
+
+    fn walk(&mut self, node: &JsSyntaxNode, scope: ScopeId) {
+        match node.kind() {
+            JsSyntaxKind::JS_REFERENCE_IDENTIFIER => {
+                if let Some(ident) = JsReferenceIdentifier::cast_ref(node) {
+                    self.record_reference(&ident, scope);
+                }
+            }
+            JsSyntaxKind::JS_IMPORT => {
+                if let Some(import) = JsImport::cast_ref(node) {
+                    self.handle_import(&import, scope);
+                }
+            }
+            JsSyntaxKind::JS_VARIABLE_DECLARATION => {
+                if let Some(decl) = JsVariableDeclaration::cast_ref(node) {
+                    self.handle_variable_declaration(&decl, scope);
+                }
+            }
+            JsSyntaxKind::JS_FUNCTION_DECLARATION => {
+                if let Some(decl) = JsFunctionDeclaration::cast_ref(node) {
+                    self.handle_function_declaration(&decl, scope);
+                }
+            }
+            JsSyntaxKind::JS_FUNCTION_EXPRESSION => {
+                if let Some(expr) = JsFunctionExpression::cast_ref(node) {
+                    self.handle_function_expression(&expr, scope);
+                }
+            }
+            JsSyntaxKind::JS_ARROW_FUNCTION_EXPRESSION => {
+                if let Some(arrow) = JsArrowFunctionExpression::cast_ref(node) {
+                    self.handle_arrow_function(&arrow, scope);
+                }
+            }
+            JsSyntaxKind::JS_CLASS_DECLARATION => {
+                if let Some(decl) = JsClassDeclaration::cast_ref(node) {
+                    self.handle_class_declaration(&decl, scope);
+                }
+            }
+            JsSyntaxKind::JS_BLOCK_STATEMENT => {
+                let block_scope = self.push_scope(ScopeKind::Block, Some(scope));
+                self.walk_children(node, block_scope);
+            }
+            JsSyntaxKind::JS_CATCH_CLAUSE => {
+                if let Some(clause) = JsCatchClause::cast_ref(node) {
+                    self.handle_catch_clause(&clause, scope);
+                }
+            }
+            JsSyntaxKind::JS_FOR_STATEMENT => {
+                if let Some(stmt) = JsForStatement::cast_ref(node) {
+                    self.handle_for_statement(&stmt, scope);
+                }
+            }
+            JsSyntaxKind::JS_FOR_IN_STATEMENT => {
+                if let Some(stmt) = JsForInStatement::cast_ref(node) {
+                    self.handle_for_in_statement(&stmt, scope);
+                }
+            }
+            JsSyntaxKind::JS_FOR_OF_STATEMENT => {
+                if let Some(stmt) = JsForOfStatement::cast_ref(node) {
+                    self.handle_for_of_statement(&stmt, scope);
+                }
+            }
+            _ => self.walk_children(node, scope),
+        }
+    }
+
+    fn walk_children(&mut self, node: &JsSyntaxNode, scope: ScopeId) {
+        for child in node.children() {
+            self.walk(&child, scope);
+        }
+    }
+
+    fn record_reference(&mut self, identifier: &JsReferenceIdentifier, scope: ScopeId) {
+        let Ok(token) = identifier.value_token() else {
+            return;
+        };
+        let offset = usize::from(identifier.syntax().text_trimmed_range().start());
+        self.pending_refs
+            .push((offset, scope, token.text_trimmed().to_string()));
+    }
+
+    fn bind_identifier(&mut self, binding: &AnyJsBinding, kind: BindingKind, scope: ScopeId) {
+        let Some(ident) = binding.as_js_identifier_binding() else {
+            return;
+        };
+        let Ok(token) = ident.name_token() else {
+            return;
+        };
+        let offset = usize::from(ident.syntax().text_trimmed_range().start());
+        self.add_binding(scope, token.text_trimmed().to_string(), kind, offset);
+    }
+
+    fn walk_default(&mut self, init: Option<JsInitializerClause>, scope: ScopeId) {
+        let Some(init) = init else {
+            return;
+        };
+        if let Ok(expr) = init.expression() {
+            self.walk(expr.syntax(), scope);
+        }
+    }
+
+    // ---- destructuring / parameter patterns ----
+
+    /// Recursively collects every identifier bound by `pattern` (handling
+    /// arbitrarily nested object/array destructuring, renames, defaults,
+    /// and rest elements), adding each as a binding of `kind` in
+    /// `binding_scope`. Default-value expressions found along the way are
+    /// walked for references in `ref_scope` -- the scope the pattern's
+    /// containing statement is textually in, which for a hoisted `var` is
+    /// not the same as `binding_scope`.
+    fn collect_pattern_bindings(
+        &mut self,
+        pattern: &AnyJsBindingPattern,
+        kind: BindingKind,
+        binding_scope: ScopeId,
+        ref_scope: ScopeId,
+    ) {
+        match pattern {
+            AnyJsBindingPattern::AnyJsBinding(binding) => {
+                self.bind_identifier(binding, kind, binding_scope);
+            }
+            AnyJsBindingPattern::JsObjectBindingPattern(object) => {
+                for member in object.properties().iter().flatten() {
+                    match member {
+                        AnyJsObjectBindingPatternMember::JsObjectBindingPatternProperty(
+                            property,
+                        ) => {
+                            if let Ok(nested) = property.pattern() {
+                                self.collect_pattern_bindings(
+                                    &nested,
+                                    kind.clone(),
+                                    binding_scope,
+                                    ref_scope,
+                                );
+                            }
+                            self.walk_default(property.init(), ref_scope);
+                        }
+                        AnyJsObjectBindingPatternMember::JsObjectBindingPatternShorthandProperty(
+                            property,
+                        ) => {
+                            if let Ok(binding) = property.identifier() {
+                                self.bind_identifier(&binding, kind.clone(), binding_scope);
+                            }
+                            self.walk_default(property.init(), ref_scope);
+                        }
+                        AnyJsObjectBindingPatternMember::JsObjectBindingPatternRest(rest) => {
+                            if let Ok(binding) = rest.binding() {
+                                self.bind_identifier(&binding, kind.clone(), binding_scope);
+                            }
+                        }
+                        AnyJsObjectBindingPatternMember::JsBogusBinding(_) => {}
+                    }
+                }
+            }
+            AnyJsBindingPattern::JsArrayBindingPattern(array) => {
+                for element in array.elements().iter().flatten() {
+                    match element {
+                        AnyJsArrayBindingPatternElement::JsArrayBindingPatternElement(element) => {
+                            if let Ok(nested) = element.pattern() {
+                                self.collect_pattern_bindings(
+                                    &nested,
+                                    kind.clone(),
+                                    binding_scope,
+                                    ref_scope,
+                                );
+                            }
+                            self.walk_default(element.init(), ref_scope);
+                        }
+                        AnyJsArrayBindingPatternElement::JsArrayBindingPatternRestElement(rest) => {
+                            if let Ok(nested) = rest.pattern() {
+                                self.collect_pattern_bindings(
+                                    &nested,
+                                    kind.clone(),
+                                    binding_scope,
+                                    ref_scope,
+                                );
+                            }
+                        }
+                        AnyJsArrayBindingPatternElement::JsArrayHole(_) => {}
+                    }
+                }
+            }
+        }
+    }
+
+    fn bind_parameters(&mut self, params: &JsParameters, scope: ScopeId) {
+        for item in params.items().iter().flatten() {
+            match item {
+                AnyJsParameter::AnyJsFormalParameter(AnyJsFormalParameter::JsFormalParameter(
+                    param,
+                )) => {
+                    if let Ok(pattern) = param.binding() {
+                        self.collect_pattern_bindings(
+                            &pattern,
+                            BindingKind::Parameter,
+                            scope,
+                            scope,
+                        );
+                    }
+                    self.walk_default(param.initializer(), scope);
+                }
+                AnyJsParameter::JsRestParameter(param) => {
+                    if let Ok(pattern) = param.binding() {
+                        self.collect_pattern_bindings(
+                            &pattern,
+                            BindingKind::Parameter,
+                            scope,
+                            scope,
+                        );
+                    }
+                }
+                AnyJsParameter::AnyJsFormalParameter(AnyJsFormalParameter::JsBogusParameter(_))
+                | AnyJsParameter::TsThisParameter(_) => {}
+            }
+        }
+    }
+
+    // ---- declarations ----
+
+    fn handle_variable_declaration(&mut self, decl: &JsVariableDeclaration, scope: ScopeId) {
+        let is_var = decl.kind().is_ok_and(|t| t.text_trimmed() == "var");
+        let is_const = decl.kind().is_ok_and(|t| t.text_trimmed() == "const");
+        let kind = if is_var {
+            BindingKind::Var
+        } else if is_const {
+            BindingKind::Const
+        } else {
+            BindingKind::Let
+        };
+        let binding_scope = if is_var {
+            self.hoist_target(scope)
+        } else {
+            scope
+        };
+        for declarator in decl.declarators().iter().flatten() {
+            self.handle_declarator(&declarator, kind.clone(), binding_scope, scope);
+        }
+    }
+
+    fn handle_declarator(
+        &mut self,
+        declarator: &JsVariableDeclarator,
+        kind: BindingKind,
+        binding_scope: ScopeId,
+        ref_scope: ScopeId,
+    ) {
+        if let Ok(pattern) = declarator.id() {
+            self.collect_pattern_bindings(&pattern, kind, binding_scope, ref_scope);
+        }
+        self.walk_default(declarator.initializer(), ref_scope);
+    }
+
+    fn handle_function_declaration(&mut self, decl: &JsFunctionDeclaration, scope: ScopeId) {
+        if let Ok(id) = decl.id() {
+            self.bind_identifier(&id, BindingKind::Function, scope);
+        }
+        let function_scope = self.push_scope(ScopeKind::Function, Some(scope));
+        if let Ok(params) = decl.parameters() {
+            self.bind_parameters(&params, function_scope);
+        }
+        if let Ok(body) = decl.body() {
+            for statement in body.statements() {
+                self.walk(statement.syntax(), function_scope);
+            }
+        }
+    }
+
+    fn handle_function_expression(&mut self, expr: &JsFunctionExpression, scope: ScopeId) {
+        let function_scope = self.push_scope(ScopeKind::Function, Some(scope));
+        // A named function expression's own name is visible only inside its
+        // own body, not the enclosing scope -- unlike a declaration.
+        if let Some(id) = expr.id() {
+            self.bind_identifier(&id, BindingKind::Function, function_scope);
+        }
+        if let Ok(params) = expr.parameters() {
+            self.bind_parameters(&params, function_scope);
+        }
+        if let Ok(body) = expr.body() {
+            for statement in body.statements() {
+                self.walk(statement.syntax(), function_scope);
+            }
+        }
+    }
+
+    fn handle_arrow_function(&mut self, arrow: &JsArrowFunctionExpression, scope: ScopeId) {
+        let function_scope = self.push_scope(ScopeKind::Function, Some(scope));
+        if let Ok(params) = arrow.parameters() {
+            match params {
+                AnyJsArrowFunctionParameters::AnyJsBinding(binding) => {
+                    self.bind_identifier(&binding, BindingKind::Parameter, function_scope);
+                }
+                AnyJsArrowFunctionParameters::JsParameters(params) => {
+                    self.bind_parameters(&params, function_scope);
+                }
+            }
+        }
+        if let Ok(body) = arrow.body() {
+            match body {
+                AnyJsFunctionBody::JsFunctionBody(body) => {
+                    for statement in body.statements() {
+                        self.walk(statement.syntax(), function_scope);
+                    }
+                }
+                AnyJsFunctionBody::AnyJsExpression(expr) => {
+                    self.walk(expr.syntax(), function_scope);
+                }
+            }
+        }
+    }
+
+    fn handle_class_declaration(&mut self, decl: &JsClassDeclaration, scope: ScopeId) {
+        if let Ok(id) = decl.id() {
+            self.bind_identifier(&id, BindingKind::Class, scope);
+        }
+        // Lightweight: no dedicated class scope or member analysis -- just
+        // recurse generically so nested functions/arrows inside methods are
+        // still found and scoped correctly. Re-walking the `id` node this
+        // way is harmless: JS_IDENTIFIER_BINDING isn't one of `walk`'s
+        // special cases, so it's a no-op.
+        self.walk_children(decl.syntax(), scope);
+    }
+
+    fn handle_catch_clause(&mut self, clause: &JsCatchClause, scope: ScopeId) {
+        let catch_scope = self.push_scope(ScopeKind::Catch, Some(scope));
+        if let Some(declaration) = clause.declaration() {
+            if let Ok(pattern) = declaration.binding() {
+                self.collect_pattern_bindings(
+                    &pattern,
+                    BindingKind::CatchParameter,
+                    catch_scope,
+                    catch_scope,
+                );
+            }
+        }
+        if let Ok(body) = clause.body() {
+            for statement in body.statements() {
+                self.walk(statement.syntax(), catch_scope);
+            }
+        }
+    }
+
+    // ---- loops ----
+
+    fn handle_for_statement(&mut self, stmt: &JsForStatement, scope: ScopeId) {
+        let loop_scope = self.push_scope(ScopeKind::Loop, Some(scope));
+        match stmt.initializer() {
+            Some(AnyJsForInitializer::JsVariableDeclaration(decl)) => {
+                self.handle_variable_declaration(&decl, loop_scope);
+            }
+            Some(AnyJsForInitializer::AnyJsExpression(expr)) => {
+                self.walk(expr.syntax(), loop_scope);
+            }
+            None => {}
+        }
+        if let Some(test) = stmt.test() {
+            self.walk(test.syntax(), loop_scope);
+        }
+        if let Some(update) = stmt.update() {
+            self.walk(update.syntax(), loop_scope);
+        }
+        if let Ok(body) = stmt.body() {
+            self.walk(body.syntax(), loop_scope);
+        }
+    }
+
+    fn handle_for_in_statement(&mut self, stmt: &JsForInStatement, scope: ScopeId) {
+        let loop_scope = self.push_scope(ScopeKind::Loop, Some(scope));
+        if let Ok(initializer) = stmt.initializer() {
+            self.handle_for_in_or_of_initializer(initializer, loop_scope);
+        }
+        if let Ok(expr) = stmt.expression() {
+            // The iterated expression is evaluated in the outer scope: the
+            // loop variable it's about to be assigned into isn't in scope
+            // for it.
+            self.walk(expr.syntax(), scope);
+        }
+        if let Ok(body) = stmt.body() {
+            self.walk(body.syntax(), loop_scope);
+        }
+    }
+
+    fn handle_for_of_statement(&mut self, stmt: &JsForOfStatement, scope: ScopeId) {
+        let loop_scope = self.push_scope(ScopeKind::Loop, Some(scope));
+        if let Ok(initializer) = stmt.initializer() {
+            self.handle_for_in_or_of_initializer(initializer, loop_scope);
+        }
+        if let Ok(expr) = stmt.expression() {
+            self.walk(expr.syntax(), scope);
+        }
+        if let Ok(body) = stmt.body() {
+            self.walk(body.syntax(), loop_scope);
+        }
+    }
+
+    fn handle_for_in_or_of_initializer(
+        &mut self,
+        initializer: AnyJsForInOrOfInitializer,
+        scope: ScopeId,
+    ) {
+        match initializer {
+            AnyJsForInOrOfInitializer::JsForVariableDeclaration(decl) => {
+                self.handle_for_variable_declaration(&decl, scope);
+            }
+            AnyJsForInOrOfInitializer::AnyJsAssignmentPattern(pattern) => {
+                // Not a declaration -- an existing binding being assigned
+                // into (`for (x in obj)`), so walk it for references rather
+                // than treating it as introducing a new one.
+                self.walk(pattern.syntax(), scope);
+            }
+        }
+    }
+
+    fn handle_for_variable_declaration(&mut self, decl: &JsForVariableDeclaration, scope: ScopeId) {
+        let is_var = decl.kind_token().is_ok_and(|t| t.text_trimmed() == "var");
+        let is_const = decl.kind_token().is_ok_and(|t| t.text_trimmed() == "const");
+        let kind = if is_var {
+            BindingKind::Var
+        } else if is_const {
+            BindingKind::Const
+        } else {
+            BindingKind::Let
+        };
+        let binding_scope = if is_var {
+            self.hoist_target(scope)
+        } else {
+            scope
+        };
+        if let Ok(declarator) = decl.declarator() {
+            self.handle_declarator(&declarator, kind, binding_scope, scope);
+        }
+    }
+
+    // ---- imports ----
+
+    fn handle_import(&mut self, import: &JsImport, scope: ScopeId) {
+        let Ok(source) = import.source_text() else {
+            return;
+        };
+        let source = source.text().to_string();
+        let Ok(clause) = import.import_clause() else {
+            return;
+        };
+        match clause {
+            AnyJsImportClause::JsImportBareClause(_) => {}
+            AnyJsImportClause::JsImportDefaultClause(clause) => {
+                if let Ok(specifier) = clause.default_specifier() {
+                    self.bind_import_default(&specifier, &source, scope);
+                }
+            }
+            AnyJsImportClause::JsImportNamespaceClause(clause) => {
+                if let Ok(specifier) = clause.namespace_specifier() {
+                    self.bind_import_namespace(&specifier, &source, scope);
+                }
+            }
+            AnyJsImportClause::JsImportNamedClause(clause) => {
+                if let Ok(named) = clause.named_specifiers() {
+                    self.bind_named_specifiers(&named, &source, scope);
+                }
+            }
+            AnyJsImportClause::JsImportCombinedClause(clause) => {
+                if let Ok(default) = clause.default_specifier() {
+                    self.bind_import_default(&default, &source, scope);
+                }
+                if let Ok(specifier) = clause.specifier() {
+                    match specifier {
+                        AnyJsCombinedSpecifier::JsNamedImportSpecifiers(named) => {
+                            self.bind_named_specifiers(&named, &source, scope);
+                        }
+                        AnyJsCombinedSpecifier::JsNamespaceImportSpecifier(namespace) => {
+                            self.bind_import_namespace(&namespace, &source, scope);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn bind_import_default(
+        &mut self,
+        specifier: &JsDefaultImportSpecifier,
+        source: &str,
+        scope: ScopeId,
+    ) {
+        let Ok(binding) = specifier.local_name() else {
+            return;
+        };
+        let Some(ident) = binding.as_js_identifier_binding() else {
+            return;
+        };
+        let Ok(token) = ident.name_token() else {
+            return;
+        };
+        let local = token.text_trimmed().to_string();
+        let offset = usize::from(ident.syntax().text_trimmed_range().start());
+        self.add_binding(
+            scope,
+            local.clone(),
+            BindingKind::Import(ImportBinding {
+                source: source.to_string(),
+                imported: ImportedName::Default,
+                local,
+            }),
+            offset,
+        );
+    }
+
+    fn bind_import_namespace(
+        &mut self,
+        specifier: &JsNamespaceImportSpecifier,
+        source: &str,
+        scope: ScopeId,
+    ) {
+        let Ok(binding) = specifier.local_name() else {
+            return;
+        };
+        let Some(ident) = binding.as_js_identifier_binding() else {
+            return;
+        };
+        let Ok(token) = ident.name_token() else {
+            return;
+        };
+        let local = token.text_trimmed().to_string();
+        let offset = usize::from(ident.syntax().text_trimmed_range().start());
+        self.add_binding(
+            scope,
+            local.clone(),
+            BindingKind::Import(ImportBinding {
+                source: source.to_string(),
+                imported: ImportedName::Namespace,
+                local,
+            }),
+            offset,
+        );
+    }
+
+    fn bind_named_specifiers(
+        &mut self,
+        specifiers: &JsNamedImportSpecifiers,
+        source: &str,
+        scope: ScopeId,
+    ) {
+        for specifier in specifiers.specifiers().iter().flatten() {
+            let (local_binding, imported_name) = match &specifier {
+                AnyJsNamedImportSpecifier::JsNamedImportSpecifier(named) => {
+                    let Ok(local) = named.local_name() else {
+                        continue;
+                    };
+                    let imported = named
+                        .name()
+                        .ok()
+                        .and_then(|export_name| export_name.value().ok())
+                        .map(|token| token.text_trimmed().to_string());
+                    (local, imported)
+                }
+                AnyJsNamedImportSpecifier::JsShorthandNamedImportSpecifier(shorthand) => {
+                    let Ok(local) = shorthand.local_name() else {
+                        continue;
+                    };
+                    (local, None)
+                }
+                AnyJsNamedImportSpecifier::JsBogusNamedImportSpecifier(_) => continue,
+            };
+            let Some(ident) = local_binding.as_js_identifier_binding() else {
+                continue;
+            };
+            let Ok(local_token) = ident.name_token() else {
+                continue;
+            };
+            let local = local_token.text_trimmed().to_string();
+            let offset = usize::from(ident.syntax().text_trimmed_range().start());
+            let imported_name = imported_name.unwrap_or_else(|| local.clone());
+            self.add_binding(
+                scope,
+                local.clone(),
+                BindingKind::Import(ImportBinding {
+                    source: source.to_string(),
+                    imported: ImportedName::Named(imported_name),
+                    local,
+                }),
+                offset,
+            );
+        }
+    }
+}

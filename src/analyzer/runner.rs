@@ -1,3 +1,4 @@
+use std::cell::OnceCell;
 use std::path::Path;
 
 use biome_js_parser::{parse, JsParserOptions};
@@ -5,6 +6,7 @@ use biome_js_syntax::{JsFileSource, JsSyntaxNode};
 
 use crate::diagnostics::Violation;
 use crate::rules::Rule;
+use crate::semantic::SemanticModel;
 use crate::suppress::Suppressions;
 
 /// One file, parsed exactly once. Every rule that runs against the file shares
@@ -15,6 +17,10 @@ pub struct FileContext<'a> {
     tree: JsSyntaxNode,
     line_starts: Vec<usize>,
     parsed_cleanly: bool,
+    /// Built lazily on first access via [`Self::semantic`] and shared by
+    /// every rule that asks for it afterward, so a rule that never calls
+    /// `semantic()` never pays to build it.
+    semantic: OnceCell<SemanticModel>,
 }
 
 impl<'a> FileContext<'a> {
@@ -27,6 +33,7 @@ impl<'a> FileContext<'a> {
             parsed_cleanly: !parsed.has_errors(),
             tree: parsed.syntax(),
             line_starts: line_starts(source),
+            semantic: OnceCell::new(),
         }
     }
 
@@ -53,6 +60,14 @@ impl<'a> FileContext<'a> {
             Err(i) => i - 1,
         };
         (line + 1, offset - self.line_starts[line] + 1)
+    }
+
+    /// The file's lexical scope/binding model, built on first use and
+    /// shared by every rule that asks for it afterward. See
+    /// `docs/SEMANTIC_MODEL.md`.
+    pub fn semantic(&self) -> &SemanticModel {
+        self.semantic
+            .get_or_init(|| SemanticModel::build(&self.tree))
     }
 }
 

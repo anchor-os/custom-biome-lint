@@ -17,7 +17,7 @@ Plus a one-off portability check documented at the end.
 cargo test
 ```
 
-Expected: **117 passing, 0 failing**, in four suites.
+Expected: **135 passing, 0 failing**, in four suites.
 
 ```text
 Running unittests src/lib.rs
@@ -29,8 +29,8 @@ running 0 tests
 test result: ok. 0 passed
 
 Running tests/integration.rs
-running 32 tests
-test result: ok. 32 passed
+running 50 tests
+test result: ok. 50 passed
 
 Doc-tests custom_biome_lint
 running 1 test
@@ -63,18 +63,20 @@ cargo test --lib suppress
 cargo test --lib file_matcher
 ```
 
-### Integration tests (32, in `tests/integration.rs`)
+### Integration tests (50, in `tests/integration.rs`)
 
 These drive the public API — mostly `lint_source`, which runs the full
 parse → check → suppression-filter pipeline, the same path the CLI uses. The
 `cli_behavior` module instead runs the built binary as a subprocess, for
-behaviour that only exists at the `cli::run()` layer.
+behaviour that only exists at the `cli::run()` layer, and `semantic_model`
+drives `FileContext::semantic()` directly.
 
 | Module | Count | What it covers |
 | --- | --- | --- |
 | `no_native_map` | 7 | Native `Map` reported; Immutable named import, namespace-plus-destructure, and `require` alias all allowed; `Map` from an unrelated module still reported; suppressions work; edge cases produce exactly the documented violations |
 | `reselect_arity_match` | 5 | Mismatched arity reported, matching arity allowed, member-expression callee (`reselect.createSelector`) checked, suppressions work, edge cases flag only the namespaced mismatch |
 | `no_arrow_function_create_selector` | 5 | Wrapped `createSelector` reported with a fix attached, direct call and `make*` factory allowed, suppressions work, edge cases flag only the non-factory `make`-prefixed name, an `async` wrapper is reported but left without a fix |
+| `semantic_model` | 18 | Basic declarations, function parameters, nested-scope shadowing, all four import forms and their source/imported/local fields, a parameter and a local redeclaration each shadowing a same-named import, object/array destructuring, arrow parameters, block scope, catch scope, `var` hoisting out of a nested block, a `let` scoped to a `for` loop head, the scope parent-chain hierarchy |
 | `patterns` | 4 | Bare directory expands to a brace glob, bare directory discovers every fixture, explicit glob passed through unchanged, `node_modules` never walked |
 | `cli_behavior` | 4 | `--format json` still emits a document when every rule is disabled; `--auto-fix` unwraps the arrow and relints clean; `--auto-fix --dry-run` leaves the file untouched; `--write-fix` and `--auto-fix` together is rejected |
 | `config` | 3 | `ignoreBiomeExtensionRules` filters rules out; missing `package.json` enables everything; `warn` severity reports without disabling |
