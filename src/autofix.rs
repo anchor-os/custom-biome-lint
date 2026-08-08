@@ -166,7 +166,19 @@ fn write_atomically(path: &Path, contents: &str) -> std::io::Result<()> {
 
     let result = file
         .write_all(contents.as_bytes())
-        .and_then(|_| file.sync_all());
+        .and_then(|_| file.sync_all())
+        .and_then(|_| {
+            // The rename below swaps in this file's inode for the target's,
+            // so without this its permissions would come from the process
+            // umask instead of matching the file being replaced -- turning
+            // e.g. a 0600 or 0755 source into whatever the umask's default
+            // happens to be.
+            match fs::metadata(path) {
+                Ok(metadata) => file.set_permissions(metadata.permissions()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
+            }
+        });
     drop(file);
     if let Err(error) = result {
         let _ = fs::remove_file(&tmp_path);
@@ -528,17 +540,35 @@ mod tests {
     }
 
     #[test]
-    fn write_atomically_never_leaves_a_partially_written_file_on_a_write_error() {
-        // The temp file this simulates a failure on is never the target
-        // path itself, so if write_atomically ever wrote to the target
-        // directly (rather than a temp file that gets renamed in), this
-        // would catch it: the original content survives untouched.
+    fn write_atomically_replaces_the_target_content() {
+        // write_atomically writes a temp sibling and renames it in, so the
+        // target only ever changes as one complete replacement.
         let dir = tempfile::TempDir::new().unwrap();
         let file = dir.path().join("a.js");
         fs::write(&file, "original\n").unwrap();
 
         write_atomically(&file, "rewritten\n").unwrap();
         assert_eq!(fs::read_to_string(&file).unwrap(), "rewritten\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomically_preserves_the_original_file_mode() {
+        use std::fs::Permissions;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("a.js");
+        fs::write(&file, "original\n").unwrap();
+        fs::set_permissions(&file, Permissions::from_mode(0o600)).unwrap();
+
+        write_atomically(&file, "rewritten\n").unwrap();
+
+        let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "the rename must not replace the original file's mode with the umask default"
+        );
     }
 
     #[test]

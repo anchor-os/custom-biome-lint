@@ -581,7 +581,10 @@ Three more checks live in `Autofix::apply` itself, above `plan_file`:
   target before writing the replacement; a process kill or full disk mid-write
   would otherwise leave a half-written source file. The rename is atomic on
   the same filesystem, so the destination is either the old content or the
-  new content, never a partial write.
+  new content, never a partial write. Because the rename swaps in a new
+  inode, the temp file's permissions are copied from the original file
+  before the rename — otherwise the replacement would pick up the process's
+  umask default instead of the mode (e.g. `0600`) the original file had.
 - **Exclusive temp-file creation.** The temp file is created with
   `OpenOptions::create_new` (`O_EXCL`), not `fs::write`. `fs::write` creates
   the file if absent but otherwise opens whatever is already at that path —
