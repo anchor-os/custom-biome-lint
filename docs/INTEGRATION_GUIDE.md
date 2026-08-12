@@ -61,10 +61,14 @@ No Rust required — consumers get `node_modules/.bin/custom-biome-lint`.
 yarn add -D custom-biome-lint
 ```
 
-**Read the platform caveat in [PUBLISH_TO_NPM.md](PUBLISH_TO_NPM.md) first.** The
-published package currently carries a single pre-built binary; installing it on a
-platform it was not built for fails at lint time, not install time. Options 1 and
-2 avoid this entirely.
+Genuinely no Rust required for this option: the package publishes precompiled
+binaries for macOS/Linux/Windows on both x64 and ARM64, and npm installs only
+the one matching the current machine — see
+[docs/DISTRIBUTION.md](DISTRIBUTION.md). If a future platform isn't among the
+six currently published, `npx custom-biome-lint` prints a clear "does not
+have a prebuilt binary for" error naming the missing platform rather than
+failing silently at lint time; Options 1 and 2 remain the fallback for any
+platform not yet published.
 
 ---
 
@@ -123,7 +127,7 @@ automatic first build. It checks **existence, not freshness** — in CI, run
 `lint:custom:build` explicitly so a cached binary cannot outlive its source.
 
 `--write-fix` does not rewrite offending code. It inserts
-`// biome-ignore-line <rule>` comments, which is how you adopt the tool on an
+`// custom-biome-ignore-line <rule>` comments, which is how you adopt the tool on an
 existing codebase without a large refactor. Always inspect
 `yarn lint:custom:dry` output first.
 
@@ -285,7 +289,7 @@ rm -rf src/scratch
 
 # A suppression comment silences it.
 mkdir -p src/scratch
-printf 'const c = new Map(); // biome-ignore-line no-native-map\n' > src/scratch/probe.js
+printf 'const c = new Map(); // custom-biome-ignore-line no-native-map\n' > src/scratch/probe.js
 yarn lint:custom                      # expect exit 0
 rm -rf src/scratch
 ```

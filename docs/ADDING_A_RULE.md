@@ -263,9 +263,9 @@ export function debugThing(thing) {
 
 ```js
 export function debugThing(thing) {
-  console.log('same-line form', thing); // biome-ignore-line no-console-log
+  console.log('same-line form', thing); // custom-biome-ignore-line no-console-log
 
-  // biome-ignore-next-line no-console-log
+  // custom-biome-ignore-next-line no-console-log
   console.log('next-line form', thing);
 
   return thing;
@@ -312,7 +312,7 @@ mod no_console_log {
     #[test]
     fn respects_suppression() {
         let violations = lint_source(
-            "console.log('x'); // biome-ignore-line no-console-log\n",
+            "console.log('x'); // custom-biome-ignore-line no-console-log\n",
             Path::new("a.js"),
             &[&rule()],
         );

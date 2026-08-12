@@ -17,20 +17,20 @@ Plus a one-off portability check documented at the end.
 cargo test
 ```
 
-Expected: **150 passing, 0 failing**, in four suites.
+Expected: **157 passing, 0 failing**, in four suites.
 
 ```text
 Running unittests src/lib.rs
-running 84 tests
-test result: ok. 84 passed
+running 88 tests
+test result: ok. 88 passed
 
 Running unittests src/bin/custom-biome-lint.rs
 running 0 tests
 test result: ok. 0 passed
 
 Running tests/integration.rs
-running 65 tests
-test result: ok. 65 passed
+running 68 tests
+test result: ok. 68 passed
 
 Doc-tests custom_biome_lint
 running 1 test
@@ -41,7 +41,7 @@ The binary suite reporting 0 tests is expected — `src/bin/custom-biome-lint.rs
 7 lines that delegate to `cli::run()`, so everything is tested through the
 library.
 
-### Unit tests (84, in `src/`)
+### Unit tests (88, in `src/`)
 
 Colocated `#[cfg(test)]` modules testing components in isolation.
 
@@ -52,7 +52,7 @@ Colocated `#[cfg(test)]` modules testing components in isolation.
 | `cache` | 9 | Content-hash cache creation, marking/saving, content changes invalidating regardless of mtime, identical content staying valid after a rewrite, cache-key (rule set + version) changes invalidating, disk round-trip, corrupted-cache recovery, old mtime-format entries silently ignored |
 | `cli::args` | 20 | Quiet defaults, repeated `-v`, verbosity saturating at 3, clustered short flags (`-vd`), positional pattern, rejection of unknown flags and duplicate positionals, `--write-fix`/`--auto-fix` defaulting to writing, `--dry-run` requiring one of them, `--write-fix` and `--auto-fix` rejected together, `--format` parsing and its rejection alongside `--write-fix`/`--auto-fix` |
 | `config::package_config` | 7 | Missing `package.json`, legacy array form, object form with `off`/`warn`/`error`, malformed entries warning and being skipped |
-| `diagnostics::formatter` | 3 | JSON output carries every field, omits clean files, is stable for a clean run |
+| `diagnostics::formatter` | 7 | JSON output carries every field including `filesCacheSkipped`, omits clean files, is stable for a clean run, the text summary's `, N skipped via cache` clause appears only when nonzero (clean and dirty runs both) |
 | `suppress` | 10 | Same-line and next-line markers, multiple comma-separated rules, `--` justification suffix, block-comment and JSX brace forms, marker inside a string literal being ignored, bare marker suppressing every rule, `append_at` placement for merges |
 | `fixer` | 14 | Trailing vs own-line placement, indentation, several rules sharing one comment, extending an existing comment, justification surviving a merge, JSX brace form on its own line, JSX attributes treated as code, template-literal and parse-error refusals, CRLF and missing-final-newline round-trips, idempotency, the lexer's multi-line and regex-resync behaviour |
 
@@ -63,7 +63,7 @@ cargo test --lib suppress
 cargo test --lib file_matcher
 ```
 
-### Integration tests (65, in `tests/integration.rs`)
+### Integration tests (68, in `tests/integration.rs`)
 
 These drive the public API — mostly `lint_source`, which runs the full
 parse → check → suppression-filter pipeline, the same path the CLI uses. The
@@ -73,12 +73,12 @@ drives `FileContext::semantic()` directly.
 
 | Module | Count | What it covers |
 | --- | --- | --- |
-| `no_native_map` | 12 | Native `Map` reported; Immutable named/default/aliased import, namespace-plus-destructure, and `require` alias all allowed; `Map` from an unrelated module still reported; suppressions work; edge cases produce exactly the documented violations; a parameter shadowing a real Immutable import is reported as native (the semantic-migration fix); nested-block shadowing resolves each reference independently; a local `Map` unrelated to Immutable is still reported |
+| `no_native_map` | 14 | Native `Map` reported; Immutable named/default/aliased import, namespace-plus-destructure, `require` alias, and destructuring/member-access directly off a `require()` call all allowed; `Map` from an unrelated module still reported; suppressions work; edge cases produce exactly the documented violations; a parameter shadowing a real Immutable import is reported as native (the semantic-migration fix); nested-block shadowing resolves each reference independently; a local `Map` unrelated to Immutable is still reported |
 | `reselect_arity_match` | 9 | Mismatched arity reported, matching arity allowed, member-expression callee (`reselect.createSelector`) checked, suppressions work, edge cases flag only the namespaced mismatch; an aliased reselect import is checked; a same-named local function and a `createSelector` from another module are not treated as reselect; a shadowing parameter is not treated as reselect |
 | `no_arrow_function_create_selector` | 9 | Wrapped `createSelector` reported with a fix attached, direct call and `make*` factory allowed, suppressions work, edge cases flag only the non-factory `make`-prefixed name, an `async` wrapper is reported but left without a fix; an aliased reselect import is recognized; a same-named local function, a `createSelector` from another module, and a shadowing parameter are not treated as reselect |
 | `semantic_model` | 20 | Basic declarations, function parameters, nested-scope shadowing, all four import forms and their source/imported/local fields, a parameter and a local redeclaration each shadowing a same-named import, object/array destructuring (including a computed key as a reference), arrow parameters, block scope, catch scope, a switch statement's cases sharing one block scope, `var` hoisting out of a nested block, a `let` scoped to a `for` loop head, the scope parent-chain hierarchy |
 | `patterns` | 4 | Bare directory expands to a brace glob, bare directory discovers every fixture, explicit glob passed through unchanged, `node_modules` never walked |
-| `cli_behavior` | 4 | `--format json` still emits a document when every rule is disabled; `--auto-fix` unwraps the arrow and relints clean; `--auto-fix --dry-run` leaves the file untouched; `--write-fix` and `--auto-fix` together is rejected |
+| `cli_behavior` | 5 | `--format json` still emits a document when every rule is disabled; `--auto-fix` unwraps the arrow and relints clean; `--auto-fix --dry-run` leaves the file untouched; `--write-fix` and `--auto-fix` together is rejected; a narrower run over a cache-populated superset finds every file cache-valid (`filesChecked + filesCacheSkipped` accounts for every discovered file) |
 | `config` | 3 | `ignoreBiomeExtensionRules` filters rules out; missing `package.json` enables everything; `warn` severity reports without disabling |
 | `extensions` | 1 | An unsupported extension yields no violations |
 | top level | 3 | Registry exposes all three rules; default pattern covers `.js` and `.jsx`; every rule has fixtures for all four cases |
@@ -256,7 +256,7 @@ those patterns clean.
 
 ### After migrating the suppression comments
 
-Once the 8 comments are translated to `// biome-ignore-next-line no-native-map`
+Once the 8 comments are translated to `// custom-biome-ignore-next-line no-native-map`
 (see [MIGRATION_NOTES.md](MIGRATION_NOTES.md)), the same command should report:
 
 ```

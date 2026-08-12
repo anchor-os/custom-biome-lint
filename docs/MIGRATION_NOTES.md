@@ -49,7 +49,7 @@ For each of the 8 sites, replace the ESLint comment with this tool's equivalent:
 
 ```diff
 -    // eslint-disable-next-line customPlugin/no-native-map
-+    // biome-ignore-next-line no-native-map
++    // custom-biome-ignore-next-line no-native-map
      const map = new mapboxgl.Map({ container, style });
 ```
 
@@ -65,7 +65,7 @@ Optionally add a justification, which makes the next reader's life easier given
 these are all the same false positive:
 
 ```js
-// biome-ignore-next-line no-native-map -- mapboxgl.Map, not the native Map
+// custom-biome-ignore-next-line no-native-map -- mapboxgl.Map, not the native Map
 const map = new mapboxgl.Map({ container, style });
 ```
 
@@ -101,8 +101,8 @@ Deliberate, and worth understanding before someone "fixes" it.
 The tool recognises only:
 
 ```js
-// biome-ignore-line <rule>[, <rule2>]
-// biome-ignore-next-line <rule>[, <rule2>]
+// custom-biome-ignore-line <rule>[, <rule2>]
+// custom-biome-ignore-next-line <rule>[, <rule2>]
 ```
 
 An `// eslint-disable-next-line customPlugin/no-native-map` comment is invisible
@@ -140,7 +140,7 @@ deliberately meant to be visible in the diff.
 ./custom-biome-lint/target/release/custom-biome-lint --write-fix src
 ```
 
-On the current tree this adds 8 trailing `// biome-ignore-line no-native-map`
+On the current tree this adds 8 trailing `// custom-biome-ignore-line no-native-map`
 comments across the 8 files and exits 0, after which a plain run reports no
 violations. It does **not** remove the adjacent `eslint-disable-next-line`
 comments — those stay until the ESLint rules are deleted, and removing them is a
@@ -167,7 +167,7 @@ violations** across the codebase's 141 `createSelector` call sites. There are no
 existing suppressions for either rule, so there is nothing to translate. Both
 rules can be enabled with no code changes at all.
 
-Note the fixture files use `biome-ignore-line` markers to exercise suppression
+Note the fixture files use `custom-biome-ignore-line` markers to exercise suppression
 handling, but no real source file needs them.
 
 ## Relationship to the earlier `tools/reselect-lint` prototype
@@ -182,7 +182,7 @@ suppression marker:
 
 `custom-biome-lint` supersedes it: same rule with identical detection logic, plus
 the other two rules, configuration, extension filtering, verbosity levels, and
-the standardised `biome-ignore-*` suppression syntax.
+the standardised `custom-biome-ignore-*` suppression syntax.
 
 **The old marker is not recognised by this tool.** No source file uses it — only
 `tools/reselect-lint/fixtures/suppressed.js` does — so there is nothing to
@@ -194,11 +194,53 @@ nothing references it first:
 grep -rn "reselect-lint" --include="*.json" --include="*.yml" --include="*.sh" . | grep -v node_modules
 ```
 
+## v0.2.0: suppression marker renamed (breaking)
+
+Every suppression comment written with an earlier version of this tool used
+`biome-ignore-line` / `biome-ignore-next-line` — the same prefix Biome's own
+built-in suppression comments use (`// biome-ignore lint/...`). Since this
+tool is meant to run *alongside* Biome on the same files (see
+[CI_CD_INTEGRATION.md](CI_CD_INTEGRATION.md#how-this-tool-relates-to-biome)),
+sharing that prefix was a real collision, not a theoretical one. As of
+**v0.2.0** the markers are namespaced:
+
+| Old (pre-0.2.0) | New (0.2.0+) |
+| --- | --- |
+| `biome-ignore-line` | `custom-biome-ignore-line` |
+| `biome-ignore-next-line` | `custom-biome-ignore-next-line` |
+
+**This is a breaking change.** The moment a project upgrades to v0.2.0 or
+later, every suppression comment still written with the old marker becomes
+invisible to the tool — the violation it was silencing reappears. This is
+mechanical to fix and safe to automate, since renaming a marker string never
+changes what it means:
+
+```sh
+# From the consumer project's root, across whatever extensions this tool lints.
+# The `[^-]` right before the marker skips anything already migrated —
+# `custom-biome-ignore-*` has a `-` immediately before `biome-ignore`, an old
+# unmigrated marker has a space (or `{/* `) there instead — so this is safe
+# to run more than once. The `matches=` step guards the case where nothing
+# is left to migrate: `xargs sed` with no file list falls through to reading
+# stdin and hangs, rather than exiting cleanly.
+matches=$(grep -rlE '[^-]biome-ignore-(line|next-line)' src --include="*.js" --include="*.jsx" || true)
+if [ -n "$matches" ]; then
+  printf '%s\n' "$matches" | xargs sed -i '' -E 's/([^-])biome-ignore-next-line/\1custom-biome-ignore-next-line/g; s/([^-])biome-ignore-line/\1custom-biome-ignore-line/g'
+fi
+```
+
+(Drop the empty `''` after `-i` on Linux/GNU sed; macOS/BSD sed requires it.)
+
+Do **not** re-run `--write-fix` to "fix" this — the violations were already
+suppressed under the old marker, so a plain string rename is correct and
+non-destructive; re-running `--write-fix` would instead add a *second*,
+redundant suppression comment next to markers it doesn't recognize.
+
 ## Checklist
 
 - [ ] Build the binary — [SETUP.md](SETUP.md)
 - [ ] Re-derive the 8 comment line numbers with the `grep` above
-- [ ] Translate all 8 to `// biome-ignore-next-line no-native-map`
+- [ ] Translate all 8 to `// custom-biome-ignore-next-line no-native-map`
 - [ ] Confirm the tool exits 0 against `src/**/*.{js,jsx}`
 - [ ] Add the `package.json` scripts — [CI_CD_INTEGRATION.md](CI_CD_INTEGRATION.md)
 - [ ] Add the CI job as `allow_failure: true`, observe a few pipelines

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-pub const IGNORE_LINE: &str = "biome-ignore-line";
-pub const IGNORE_NEXT_LINE: &str = "biome-ignore-next-line";
+pub const IGNORE_LINE: &str = "custom-biome-ignore-line";
+pub const IGNORE_NEXT_LINE: &str = "custom-biome-ignore-next-line";
 
 /// A suppression comment found in the source.
 ///
@@ -43,8 +43,9 @@ pub struct Suppressions {
 }
 
 impl Suppressions {
-    /// Scans comments for `// biome-ignore-line <rules>` (applies to the comment's
-    /// own line) and `// biome-ignore-next-line <rules>` (applies to the line after).
+    /// Scans comments for `// custom-biome-ignore-line <rules>` (applies to the
+    /// comment's own line) and `// custom-biome-ignore-next-line <rules>`
+    /// (applies to the line after).
     ///
     /// A marker with no rule names suppresses every rule on its target line.
     pub fn parse(source: &str) -> Self {
@@ -177,7 +178,7 @@ mod tests {
 
     #[test]
     fn same_line_single_rule() {
-        let s = Suppressions::parse("const x = 1; // biome-ignore-line no-native-map\n");
+        let s = Suppressions::parse("const x = 1; // custom-biome-ignore-line no-native-map\n");
         assert!(s.is_suppressed(1, "no-native-map"));
         assert!(!s.is_suppressed(1, "reselect-arity-match"));
     }
@@ -185,7 +186,7 @@ mod tests {
     #[test]
     fn next_line_multiple_rules() {
         let s = Suppressions::parse(
-            "// biome-ignore-next-line no-native-map, reselect-arity-match\nconst x = 1;\n",
+            "// custom-biome-ignore-next-line no-native-map, reselect-arity-match\nconst x = 1;\n",
         );
         assert!(s.is_suppressed(2, "no-native-map"));
         assert!(s.is_suppressed(2, "reselect-arity-match"));
@@ -194,25 +195,85 @@ mod tests {
 
     #[test]
     fn justification_after_double_dash_is_ignored() {
-        let s = Suppressions::parse("x; // biome-ignore-line no-native-map -- legacy call site\n");
+        let s = Suppressions::parse(
+            "x; // custom-biome-ignore-line no-native-map -- legacy call site\n",
+        );
         assert!(s.is_suppressed(1, "no-native-map"));
     }
 
     #[test]
     fn marker_in_string_literal_is_not_a_suppression() {
-        let s = Suppressions::parse("const x = 'biome-ignore-line no-native-map';\n");
+        let s = Suppressions::parse("const x = 'custom-biome-ignore-line no-native-map';\n");
         assert!(!s.is_suppressed(1, "no-native-map"));
     }
 
     #[test]
     fn block_comment_form() {
-        let s = Suppressions::parse("x; /* biome-ignore-line no-native-map */\n");
+        let s = Suppressions::parse("x; /* custom-biome-ignore-line no-native-map */\n");
         assert!(s.is_suppressed(1, "no-native-map"));
     }
 
     #[test]
+    fn legacy_pre_0_2_0_markers_are_not_suppressions() {
+        // v0.2.0 renamed the marker to avoid colliding with Biome's own
+        // `biome-ignore` suppression syntax (see docs/MIGRATION_NOTES.md).
+        // The old prefix must stay dead: a project that hasn't migrated yet
+        // should see its old suppressions reappear as violations, not have
+        // them silently keep working under the collision.
+        let s = Suppressions::parse(
+            "x; // biome-ignore-line no-native-map\n// biome-ignore-next-line no-native-map\ny;\n",
+        );
+        assert!(!s.is_suppressed(1, "no-native-map"));
+        assert!(!s.is_suppressed(3, "no-native-map"));
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn legacy_ignore_line_marker_does_not_suppress_its_own_line() {
+        let s = Suppressions::parse("someCode(); // biome-ignore-line custom-rule\n");
+        assert!(!s.is_suppressed(1, "custom-rule"));
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn legacy_ignore_next_line_marker_does_not_suppress_the_following_line() {
+        let s = Suppressions::parse("// biome-ignore-next-line custom-rule\nsomeCode();\n");
+        assert!(!s.is_suppressed(2, "custom-rule"));
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn old_marker_beside_a_new_marker_on_adjacent_lines_only_the_new_one_suppresses() {
+        // Mixed usage during a migration: an unconverted old marker sits right
+        // next to a converted new one, both aimed at the same target line.
+        // The old marker must contribute nothing; the new marker must still
+        // suppress exactly as it would on its own.
+        let s = Suppressions::parse(
+            "// biome-ignore-next-line custom-rule\n// custom-biome-ignore-next-line custom-rule\nsomeCode();\n",
+        );
+        assert!(s.is_suppressed(3, "custom-rule"));
+        // The old marker's own would-be target (line 2, the second comment
+        // line) must not have been marked suppressed either — proving the
+        // old marker parsed to nothing, rather than merely being shadowed by
+        // the new one's result.
+        assert!(!s.is_suppressed(2, "custom-rule"));
+    }
+
+    #[test]
+    fn old_and_new_markers_on_the_same_comment_line_only_the_new_one_suppresses() {
+        // An old marker's literal text sitting directly alongside a real
+        // marker in one comment must not confuse parsing — `find` locates
+        // the new marker's substring and parses forward from there,
+        // regardless of what inert old-prefix text precedes it.
+        let s = Suppressions::parse(
+            "someCode(); // biome-ignore-line custom-rule custom-biome-ignore-line custom-rule\n",
+        );
+        assert!(s.is_suppressed(1, "custom-rule"));
+    }
+
+    #[test]
     fn bare_marker_suppresses_every_rule() {
-        let s = Suppressions::parse("x; // biome-ignore-line\n");
+        let s = Suppressions::parse("x; // custom-biome-ignore-line\n");
         assert!(s.is_suppressed(1, "no-native-map"));
         assert!(s.is_suppressed(1, "reselect-arity-match"));
         assert!(s.is_suppressed(1, "a-rule-that-does-not-exist"));
@@ -221,32 +282,32 @@ mod tests {
 
     #[test]
     fn bare_next_line_marker_suppresses_every_rule_on_the_following_line() {
-        let s = Suppressions::parse("// biome-ignore-next-line\nx;\n");
+        let s = Suppressions::parse("// custom-biome-ignore-next-line\nx;\n");
         assert!(s.is_suppressed(2, "no-native-map"));
         assert!(!s.is_suppressed(1, "no-native-map"));
     }
 
     #[test]
     fn jsx_comment_form_is_recognised() {
-        let s = Suppressions::parse("{/* biome-ignore-next-line no-native-map */}\nx;\n");
+        let s = Suppressions::parse("{/* custom-biome-ignore-next-line no-native-map */}\nx;\n");
         assert!(s.is_suppressed(2, "no-native-map"));
     }
 
     #[test]
     fn append_at_points_just_past_the_last_rule_name() {
-        let line = "x; // biome-ignore-line no-native-map -- why";
+        let line = "x; // custom-biome-ignore-line no-native-map -- why";
         let found = find_suppression_comments(line);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].rules, vec!["no-native-map"]);
         assert_eq!(
             &line[..found[0].append_at],
-            "x; // biome-ignore-line no-native-map"
+            "x; // custom-biome-ignore-line no-native-map"
         );
     }
 
     #[test]
     fn append_at_of_a_wildcard_marker_is_just_past_the_marker() {
-        let line = "x; // biome-ignore-line";
+        let line = "x; // custom-biome-ignore-line";
         let found = find_suppression_comments(line);
         assert_eq!(found.len(), 1);
         assert!(found[0].is_wildcard());

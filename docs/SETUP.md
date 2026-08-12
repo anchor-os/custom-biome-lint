@@ -239,7 +239,7 @@ cargo install --path .
 ## 5. Confirm it works
 
 ```sh
-cargo test                             # expect 152 passing
+cargo test                             # expect 157 passing
 ./target/release/custom-biome-lint fixtures   # expect 11 errors in 6 files, exit 1
 ```
 

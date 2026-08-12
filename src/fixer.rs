@@ -23,9 +23,9 @@ const MAX_TRAILING_WIDTH: usize = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Placement {
-    /// Appended to the end of the offending line as `biome-ignore-line`.
+    /// Appended to the end of the offending line as `custom-biome-ignore-line`.
     Trailing,
-    /// Inserted on its own line above as `biome-ignore-next-line`.
+    /// Inserted on its own line above as `custom-biome-ignore-next-line`.
     OwnLine,
     /// Rule names added to a suppression comment that was already there.
     Merged,
@@ -578,7 +578,7 @@ mod tests {
         let plan = plan("const m = new Map();\n", &[(1, "no-native-map")]);
         assert_eq!(
             plan.source,
-            "const m = new Map(); // biome-ignore-line no-native-map\n"
+            "const m = new Map(); // custom-biome-ignore-line no-native-map\n"
         );
         assert_eq!(plan.changes[0].placement, Placement::Trailing);
     }
@@ -589,7 +589,7 @@ mod tests {
         let plan = plan(&source, &[(1, "no-native-map")]);
         assert!(plan
             .source
-            .starts_with("    // biome-ignore-next-line no-native-map\n"));
+            .starts_with("    // custom-biome-ignore-next-line no-native-map\n"));
         assert_eq!(plan.changes[0].placement, Placement::OwnLine);
     }
 
@@ -602,27 +602,27 @@ mod tests {
         assert_eq!(plan.changes.len(), 1);
         assert!(plan
             .source
-            .contains("// biome-ignore-line no-native-map, reselect-arity-match"));
+            .contains("// custom-biome-ignore-line no-native-map, reselect-arity-match"));
     }
 
     #[test]
     fn an_existing_comment_is_extended_rather_than_duplicated() {
-        let source = "const m = new Map(); // biome-ignore-line no-native-map\n";
+        let source = "const m = new Map(); // custom-biome-ignore-line no-native-map\n";
         let plan = plan(source, &[(1, "reselect-arity-match")]);
         assert_eq!(plan.changes[0].placement, Placement::Merged);
         assert_eq!(
             plan.source,
-            "const m = new Map(); // biome-ignore-line no-native-map, reselect-arity-match\n"
+            "const m = new Map(); // custom-biome-ignore-line no-native-map, reselect-arity-match\n"
         );
     }
 
     #[test]
     fn a_justification_survives_a_merge() {
-        let source = "x(); // biome-ignore-line no-native-map -- legacy\n";
+        let source = "x(); // custom-biome-ignore-line no-native-map -- legacy\n";
         let plan = plan(source, &[(1, "reselect-arity-match")]);
         assert_eq!(
             plan.source,
-            "x(); // biome-ignore-line no-native-map, reselect-arity-match -- legacy\n"
+            "x(); // custom-biome-ignore-line no-native-map, reselect-arity-match -- legacy\n"
         );
     }
 
@@ -636,10 +636,10 @@ mod tests {
         assert_eq!(plan.changes[0].placement, Placement::OwnLine);
         assert_eq!(
             plan.source,
-            "const a = (\n  <div>\n    {/* biome-ignore-next-line no-native-map */}\n    {new Map()}\n  </div>\n);\n"
+            "const a = (\n  <div>\n    {/* custom-biome-ignore-next-line no-native-map */}\n    {new Map()}\n  </div>\n);\n"
         );
         assert!(
-            !plan.source.contains("// biome-ignore"),
+            !plan.source.contains("// custom-biome-ignore"),
             "a bare // in JSX children would render as text: {:?}",
             plan.source
         );
@@ -653,7 +653,7 @@ mod tests {
         let plan = plan(source, &[(1, "no-native-map")]);
         assert_eq!(
             plan.source,
-            "const a = <Row data={new Map()} />; // biome-ignore-line no-native-map\n"
+            "const a = <Row data={new Map()} />; // custom-biome-ignore-line no-native-map\n"
         );
     }
 
@@ -684,7 +684,7 @@ mod tests {
         );
         assert_eq!(
             plan.source,
-            "const a = 1;\r\nconst m = new Map(); // biome-ignore-line no-native-map"
+            "const a = 1;\r\nconst m = new Map(); // custom-biome-ignore-line no-native-map"
         );
     }
 
@@ -701,12 +701,13 @@ mod tests {
     fn a_marker_targeting_another_line_forces_own_line_placement() {
         // Appending a second marker here would be swallowed: only the first
         // marker on a line is ever parsed.
-        let source = "const m = new Map(); // biome-ignore-next-line no-native-map\nother();\n";
+        let source =
+            "const m = new Map(); // custom-biome-ignore-next-line no-native-map\nother();\n";
         let plan = plan(source, &[(1, "reselect-arity-match")]);
         assert_eq!(plan.changes[0].placement, Placement::OwnLine);
         assert!(plan
             .source
-            .starts_with("// biome-ignore-next-line reselect-arity-match\n"));
+            .starts_with("// custom-biome-ignore-next-line reselect-arity-match\n"));
     }
 
     #[test]

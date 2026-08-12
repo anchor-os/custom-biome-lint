@@ -2,3 +2,8 @@
 /node_modules
 /.custom-biome-lint-cache
 .DS_Store
+
+# Precompiled binaries are produced by CI at release time and copied into
+# npm/<platform>/bin/ just before publish — never committed to source control.
+npm/*/bin/custom-biome-lint
+npm/*/bin/custom-biome-lint.exe

@@ -33,6 +33,16 @@ What this tool does share with Biome is the **parser**. It is built on
 tolerance for JSX inside `.js` files. There is no risk of the two tools
 disagreeing about what the source code means.
 
+**Suppression markers are namespaced to avoid colliding with Biome's own.**
+Biome's built-in suppression comments also start with `biome-ignore`
+(`// biome-ignore lint/...`). Since the two tools run side by side on the same
+files, sharing that prefix meant Biome's own parser could pick up this tool's
+markers (or vice versa) depending on exact wording — a real collision, not a
+theoretical one, given "runs alongside Biome, not inside it" above is the
+whole point of keeping them separate. This tool's markers are
+`custom-biome-ignore-line` / `custom-biome-ignore-next-line` for exactly this
+reason — see [README.md](../README.md#suppressions).
+
 ### Forward-looking: if Biome ships a plugin API
 
 **This is not a current capability.** A plugin API has been discussed for a
@@ -133,7 +143,7 @@ echo "Running custom lint rules..."
 if ! yarn lint:custom; then
   echo ""
   echo "Custom lint rules failed. See UI/dashboard/custom-biome-lint/docs/RULES.md"
-  echo "To suppress a specific finding: // biome-ignore-next-line <rule-name>"
+  echo "To suppress a specific finding: // custom-biome-ignore-next-line <rule-name>"
   exit 1
 fi
 ```

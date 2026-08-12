@@ -341,7 +341,7 @@ on the result function's line.
 ```js
 const selectVisible = createSelector(
   [getUsers, getFilter],
-  // biome-ignore-next-line reselect-arity-match -- filter applied upstream
+  // custom-biome-ignore-next-line reselect-arity-match -- filter applied upstream
   users => users.filter(u => u.active)
 );
 ```

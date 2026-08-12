@@ -36,7 +36,7 @@ rm -rf target
 Confirm the copy stands alone before going further:
 
 ```sh
-cargo test          # 84 unit + 67 integration + 1 doc-test
+cargo test          # 88 unit + 68 integration + 1 doc-test
 cargo clippy --all-targets
 cargo build --release
 ./target/release/custom-biome-lint fixtures
@@ -193,7 +193,7 @@ Semantic versioning, where the "API" is **what the tool reports**:
 | Rule renamed or removed; existing rule reports materially more | major | `0.1.0 → 1.0.0` — breaks suppression comments and `ignoreBiomeExtensionRules` entries |
 
 Renaming a rule is a **breaking** change even though no code depends on it: every
-`// biome-ignore-line <old-name>` in every consumer silently stops working. If you
+`// custom-biome-ignore-line <old-name>` in every consumer silently stops working. If you
 must rename, keep the old name accepted for one minor release.
 
 Stay on `0.x` until the rule set has settled.

@@ -34,7 +34,7 @@ All of the following must be true before you claim the task is done:
 
 | Gate | Command | Expected |
 | --- | --- | --- |
-| Tests pass | `cargo test` | 84 unit + 67 integration + 1 doc-test pass **before** your change; your new tests are additive |
+| Tests pass | `cargo test` | 88 unit + 68 integration + 1 doc-test pass **before** your change; your new tests are additive |
 | No lint warnings | `cargo clippy --all-targets` | zero warnings |
 | Release builds | `cargo build --release` | succeeds |
 | Fixtures behave | `./target/release/custom-biome-lint fixtures` | your rule reports `invalid.js`, stays silent on `valid.js` and `suppressed.js` |
@@ -64,7 +64,7 @@ by `RuleRegistry::default_pattern()` from the union of every registered rule's
 `supported_extensions()`.
 
 `name()` is load-bearing in three places at once: the rightmost column of CLI
-output, the identifier users write in `// biome-ignore-line <name>`, and the
+output, the identifier users write in `// custom-biome-ignore-line <name>`, and the
 string they list in `ignoreBiomeExtensionRules` in `package.json`. Pick it once
 and use it verbatim everywhere.
 
@@ -149,7 +149,7 @@ for (const item of items) {
 const results = await Promise.all(items.map(process));
 ```
 
-Suppress with `// biome-ignore-line no-await-in-loop` (sometimes serialisation is
+Suppress with `// custom-biome-ignore-line no-await-in-loop` (sometimes serialisation is
 deliberate — rate limiting, ordered writes).
 
 ### The two cases that make this rule non-trivial
@@ -421,13 +421,13 @@ export async function serialDoWhile() {
 ```js
 export async function rateLimited(items) {
   for (const item of items) {
-    await process(item); // biome-ignore-line no-await-in-loop -- deliberate rate limiting
+    await process(item); // custom-biome-ignore-line no-await-in-loop -- deliberate rate limiting
   }
 }
 
 export async function orderedWrites(items) {
   for (const item of items) {
-    // biome-ignore-next-line no-await-in-loop
+    // custom-biome-ignore-next-line no-await-in-loop
     await write(item);
   }
 }
@@ -553,7 +553,7 @@ about the limitations — see below.
 
 **Do not re-implement the plumbing.**
 
-- **Suppression comments.** Do not scan for `biome-ignore-*` in your rule. Report
+- **Suppression comments.** Do not scan for `custom-biome-ignore-*` in your rule. Report
   everything you find; the runner filters. Re-implementing it means suppressions
   applied twice, or inconsistently with the other rules.
 - **File extensions.** Do not check `file.path().extension()`. The runner skipped
