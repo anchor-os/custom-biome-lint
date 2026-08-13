@@ -55,8 +55,8 @@ CONFIGURATION:
     \"warn\" (reported but does not fail the run) and \"error\" (default).
 
 SUPPRESSIONS:
-    // biome-ignore-line rule-name[, rule-name2]
-    // biome-ignore-next-line rule-name[, rule-name2]
+    // custom-biome-ignore-line rule-name[, rule-name2]
+    // custom-biome-ignore-next-line rule-name[, rule-name2]
 
     A marker with no rule names suppresses every rule on its target line.
     Inside JSX children the {/* ... */} form is required, and is what

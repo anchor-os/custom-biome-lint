@@ -97,7 +97,7 @@ where
         // stdout as JSON with nothing to parse. --write-fix/--auto-fix have no
         // rules to fix either way, so they still return early without a report.
         if !args.write_fix && !args.auto_fix {
-            let mut totals = tally(&[], 0);
+            let mut totals = tally(&[], 0, 0);
             totals.elapsed = start.elapsed();
             reporter.print_report(&[], &totals, args.format);
         }
@@ -158,18 +158,21 @@ where
     dlog!(reporter, "cache_key = {cache_key}");
 
     // Analyze files (parallel or sequential)
-    let (analyzed_files, unparsed, checked) = if args.parallel {
+    let (analyzed_files, unparsed, checked, cache_skipped) = if args.parallel {
         analyze_files_parallel(&discovery.files, &rules, &cache_key, &cache)
     } else {
         analyze_files_sequential(&discovery.files, &rules, &cache_key, &cache, &reporter)
     };
 
-    // Mark analyzed files as cached
-    let mut cache_hits = 0usize;
+    // Mark freshly-analyzed, clean files as cached for next run. Distinct
+    // from `cache_skipped` above: that counts files the cache already had
+    // and this run never even re-read the AST for; this counts files this
+    // run analyzed from scratch that turned out clean and so get cached now.
+    let mut newly_cached = 0usize;
     for (file, source, analyzed) in &analyzed_files {
         if analyzed.parsed_cleanly && analyzed.violations.is_empty() {
             cache.mark_valid(file, &hash_content(source), &cache_key);
-            cache_hits += 1;
+            newly_cached += 1;
         }
     }
 
@@ -225,9 +228,11 @@ where
         vlog!(
             reporter,
             1,
-            "cache: {} file(s) cached, {} hit(s)",
+            "cache: {} file(s) cached total, {} skipped this run (already valid), \
+             {} newly marked clean this run",
             cached_count,
-            cache_hits
+            cache_skipped,
+            newly_cached
         );
     }
 
@@ -271,7 +276,7 @@ where
         };
     }
 
-    let mut totals = tally(&reports, checked);
+    let mut totals = tally(&reports, checked, cache_skipped);
     totals.elapsed = start.elapsed();
     reporter.print_report(&reports, &totals, args.format);
 
@@ -391,10 +396,12 @@ fn analyze_files_sequential(
     Vec<(PathBuf, String, crate::analyzer::AnalyzedFile)>,
     usize,
     usize,
+    usize,
 ) {
     let mut analyzed = Vec::new();
     let mut unparsed = 0usize;
     let mut checked = 0usize;
+    let mut cache_skipped = 0usize;
 
     for file in files {
         let source = match fs::read_to_string(file) {
@@ -407,6 +414,7 @@ fn analyze_files_sequential(
 
         if cache.is_valid(file, &hash_content(&source), cache_key) {
             dlog!(reporter, "cache hit: {}", file.display());
+            cache_skipped += 1;
             continue;
         }
         checked += 1;
@@ -418,7 +426,7 @@ fn analyze_files_sequential(
         analyzed.push((file.clone(), source, result));
     }
 
-    (analyzed, unparsed, checked)
+    (analyzed, unparsed, checked, cache_skipped)
 }
 
 /// Analyze files in parallel using rayon. Same read-once, hash-to-decide
@@ -432,12 +440,16 @@ fn analyze_files_parallel(
     Vec<(PathBuf, String, crate::analyzer::AnalyzedFile)>,
     usize,
     usize,
+    usize,
 ) {
+    let cache_skipped = std::sync::atomic::AtomicUsize::new(0);
+
     let analyzed: Vec<_> = files
         .par_iter()
         .filter_map(|file| {
             let source = fs::read_to_string(file).ok()?;
             if cache.is_valid(file, &hash_content(&source), cache_key) {
+                cache_skipped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 return None;
             }
             let result = analyze_file(file, &source, rules);
@@ -452,5 +464,10 @@ fn analyze_files_parallel(
         .count();
     let checked = analyzed.len();
 
-    (analyzed, unparsed, checked)
+    (
+        analyzed,
+        unparsed,
+        checked,
+        cache_skipped.load(std::sync::atomic::Ordering::Relaxed),
+    )
 }

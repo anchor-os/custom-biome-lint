@@ -119,7 +119,7 @@ each rule also contributes its own walk cost, which no design can share away.
 The second benefit is organisational: **new rules inherit suppression and
 extension filtering for free.** A rule author writes detection logic and
 nothing else — there is no ignore-comment parsing to get subtly wrong, and no
-way for two rules to disagree about what `// biome-ignore-line` means. See
+way for two rules to disagree about what `// custom-biome-ignore-line` means. See
 "suppression and extension filtering live in the runner" below.
 
 **Nothing is lost.** The spec's two parameters are still available as
@@ -207,7 +207,7 @@ for rule in rules {
 
 1. **Consistency by construction.** If each rule parsed its own ignore comments,
    a new rule could easily get the syntax subtly wrong — supporting
-   `biome-ignore-line` but not the `--` justification suffix, say — and users
+   `custom-biome-ignore-line` but not the `--` justification suffix, say — and users
    would hit inconsistent behaviour across rules. There is exactly one
    implementation, in `suppress/mod.rs`, so all rules behave identically.
 2. **Rules stay minimal.** A new rule author writes detection logic and nothing
@@ -510,8 +510,8 @@ machine.
 
 ### `src/suppress/`
 
-`mod.rs` — `Suppressions::parse` scans each line for `biome-ignore-line` (applies
-to that line) and `biome-ignore-next-line` (applies to the following line),
+`mod.rs` — `Suppressions::parse` scans each line for `custom-biome-ignore-line` (applies
+to that line) and `custom-biome-ignore-next-line` (applies to the following line),
 building a map from line number to the rules suppressed there. A bare marker sets
 an `all` flag instead of listing names.
 
@@ -524,11 +524,11 @@ justification.
 Details worth knowing:
 
 - **A marker only counts inside a real comment.** `comment_body` finds the first
-  `//` or `/*` and only looks after it, so `const x = 'biome-ignore-line
+  `//` or `/*` and only looks after it, so `const x = 'custom-biome-ignore-line
   no-native-map'` is not a suppression. This is a deliberate lexical
   approximation rather than a token-level check — good enough given the marker
   text would be bizarre inside a string, and it avoids a second tree walk.
-- **A bare marker suppresses every rule.** `// biome-ignore-line` with no rule
+- **A bare marker suppresses every rule.** `// custom-biome-ignore-line` with no rule
   name sets `LineSuppression::all`. The cost is the reason to avoid writing one:
   a blanket-ignore left behind after a refactor silently hides violations from
   rules that did not exist when it was written. `--write-fix` therefore always
@@ -538,7 +538,7 @@ Details worth knowing:
   marker appended to the same line would be swallowed, which is why the fixer
   refuses trailing placement on a line that already carries one.
 
-A `--` token ends the rule list, so `// biome-ignore-line no-native-map -- keys
+A `--` token ends the rule list, so `// custom-biome-ignore-line no-native-map -- keys
 are DOM nodes` works.
 
 ### `src/fixer.rs`

@@ -547,6 +547,79 @@ mod cli_behavior {
             .expect("failed to run custom-biome-lint");
         assert!(!output.status.success());
     }
+
+    /// Regression for a large-set-then-small-overlapping-set cache sequence:
+    /// a full-tree run caches every clean file, then a second, narrower run
+    /// over a subset of those same (unchanged) files correctly finds them
+    /// all cache-valid and skips re-analyzing them. That is the cache
+    /// working as designed -- `filesChecked: 0` there is not a sign nothing
+    /// happened, and this test's own assertion that
+    /// `filesChecked + filesCacheSkipped == discovered` is what actually
+    /// proves it: every discovered file was accounted for, just not all of
+    /// them freshly re-analyzed.
+    #[test]
+    fn a_narrower_run_over_a_cached_superset_finds_every_file_cache_valid() {
+        let tmpdir = TempDir::new().unwrap();
+        fs::create_dir_all(tmpdir.path().join("src/auth")).unwrap();
+        fs::write(tmpdir.path().join("src/App.jsx"), "export const x = 1;\n").unwrap();
+        fs::write(
+            tmpdir.path().join("src/auth/azure.js"),
+            "export const login = () => {};\n",
+        )
+        .unwrap();
+        fs::write(
+            tmpdir.path().join("src/auth/okta.js"),
+            "export const login = () => {};\n",
+        )
+        .unwrap();
+        // A handful of other clean files so the first run's file set is a
+        // real (if small) superset of the second run's, not identical to it.
+        for i in 0..5 {
+            fs::write(
+                tmpdir.path().join(format!("src/file{i}.js")),
+                format!("export const x{i} = {i};\n"),
+            )
+            .unwrap();
+        }
+
+        let large_run = Command::new(env!("CARGO_BIN_EXE_custom-biome-lint"))
+            .arg("src/**/*.{js,jsx}")
+            .arg("--format")
+            .arg("json")
+            .current_dir(tmpdir.path())
+            .output()
+            .expect("failed to run custom-biome-lint");
+        assert!(large_run.status.success(), "{:?}", large_run);
+
+        let small_run = Command::new(env!("CARGO_BIN_EXE_custom-biome-lint"))
+            .arg("{src/App.jsx,src/auth/azure.js,src/auth/okta.js}")
+            .arg("--format")
+            .arg("json")
+            .current_dir(tmpdir.path())
+            .output()
+            .expect("failed to run custom-biome-lint");
+        assert!(
+            small_run.status.success(),
+            "an all-cached, all-clean subset must still exit 0: {:?}",
+            small_run
+        );
+
+        let summary: serde_json::Value =
+            serde_json::from_slice(&small_run.stdout).expect("stdout must be valid JSON");
+        let checked = summary["summary"]["filesChecked"].as_u64().unwrap();
+        let cache_skipped = summary["summary"]["filesCacheSkipped"].as_u64().unwrap();
+        assert_eq!(
+            checked + cache_skipped,
+            3,
+            "every discovered file must be accounted for as either freshly \
+             checked or cache-skipped, not silently dropped: {summary:?}"
+        );
+        assert_eq!(
+            cache_skipped, 3,
+            "all three were already cached clean by the large run: {summary:?}"
+        );
+        assert_eq!(summary["summary"]["clean"], true);
+    }
 }
 
 mod semantic_model {

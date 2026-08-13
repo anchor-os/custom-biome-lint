@@ -21,6 +21,40 @@ ports are deliberately behaviour-for-behaviour rather than "improved", so that
 enabling this tool produces exactly the findings ESLint produced. Full details,
 including one known false-positive class, are in [docs/RULES.md](docs/RULES.md).
 
+## Installation
+
+```sh
+npm install custom-biome-lint
+npx custom-biome-lint --help
+```
+
+**Rust is NOT required** for normal npm installation or usage. `npm install`
+pulls down a small JS launcher plus a precompiled native binary for your
+platform via npm's `optionalDependencies` — the same distribution model
+[Biome](https://biomejs.dev), esbuild, and swc use. See
+[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) for how it works under the hood.
+
+### Supported platforms
+
+| OS | Architecture |
+| --- | --- |
+| macOS | ARM64 |
+| macOS | x64 |
+| Linux | ARM64 |
+| Linux | x64 |
+| Windows | ARM64 |
+| Windows | x64 |
+
+If your platform isn't listed, `npx custom-biome-lint` prints a clear error
+naming your platform/arch and the supported list — it never falls back to
+compiling from source.
+
+### Building from source (contributors, git submodule consumers)
+
+Rust **is** required for this path. See
+[docs/USE_AS_GIT_SUBMODULE.md](docs/USE_AS_GIT_SUBMODULE.md) and
+["Build" below](#build).
+
 ## Documentation
 
 | Document | Contents |
@@ -35,14 +69,23 @@ including one known false-positive class, are in [docs/RULES.md](docs/RULES.md).
 | [docs/INCREMENTAL_CACHING_DOCUMENT.md](docs/INCREMENTAL_CACHING_DOCUMENT.md) | How the content-hash cache works, and why it replaced mtime |
 | [docs/BENCHMARKING.md](docs/BENCHMARKING.md) | Re-runnable performance harness (`scripts/benchmark.sh`) and current numbers |
 | [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md) | Lexical scope/binding model and identifier resolution: design, limitations, how the three rules use it |
+| [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) | How the precompiled-binary npm packages work: platform packages, the JS launcher, the release pipeline |
+| [docs/PUBLISH_TO_NPM.md](docs/PUBLISH_TO_NPM.md) | Publishing/version-bump procedure for the main package and the 6 platform packages |
 
 ## Build
 
+Building the Rust binary yourself is only needed for source development or
+the [git submodule](docs/USE_AS_GIT_SUBMODULE.md) workflow — normal
+`npm install custom-biome-lint` consumers never need this (see
+[Installation](#installation) above).
+
 ```sh
-cargo build --release        # or: npm run build
+cargo build --release        # or: npm run build:native (npm run build is an alias)
 ```
 
-The binary lands at `target/release/custom-biome-lint`.
+The binary lands at `target/release/custom-biome-lint`. For an unoptimized,
+faster-to-compile build during iteration, use `npm run dev:build` (`cargo
+build`), which lands at `target/debug/custom-biome-lint`.
 
 ## Usage
 
@@ -139,6 +182,7 @@ custom-biome-lint --format json > report.json
     "warnings": 0,
     "filesWithViolations": 1,
     "filesChecked": 9,
+    "filesCacheSkipped": 0,
     "elapsedMs": 7,
     "clean": false
   }
@@ -148,6 +192,18 @@ custom-biome-lint --format json > report.json
 The schema is additive-only across versions: existing fields never change
 meaning or disappear, so a consumer that reads only the fields it knows about
 keeps working after an upgrade.
+
+`filesCacheSkipped` counts discovered files the incremental cache found
+already valid (unchanged content, same enabled rules and tool version) and
+so never re-analyzed this run — see
+[docs/INCREMENTAL_CACHING_DOCUMENT.md](docs/INCREMENTAL_CACHING_DOCUMENT.md#a-0-in-fileschecked-is-not-necessarily-a-bug)
+for why `filesChecked: 0` with a nonzero `filesCacheSkipped` is a correct,
+healthy result, not a sign the run did nothing. The text summary shows the
+same thing as a `, N skipped via cache` clause, but only when nonzero — an
+uncached (or all-cache-miss) run's output is unchanged from before this
+field existed: `✔ No violations found (0 files checked in 5ms)`. A run where
+the cache skipped files adds the clause: `✔ No violations found (0 files
+checked, 3 skipped via cache in 5ms)`.
 
 ## Configuration
 
@@ -187,9 +243,9 @@ default severity.
 Two comment forms:
 
 ```js
-const cache = new Map(); // biome-ignore-line no-native-map
+const cache = new Map(); // custom-biome-ignore-line no-native-map
 
-// biome-ignore-next-line no-native-map, reselect-arity-match
+// custom-biome-ignore-next-line no-native-map, reselect-arity-match
 const other = new Map();
 ```
 
@@ -197,13 +253,13 @@ Comma- and space-separated names both work. Text after a `--` token is ignored,
 so a justification can be written inline:
 
 ```js
-const nodeCache = new Map(); // biome-ignore-line no-native-map -- keys are DOM nodes
+const nodeCache = new Map(); // custom-biome-ignore-line no-native-map -- keys are DOM nodes
 ```
 
 A marker with **no** rule names suppresses every rule on its target line:
 
 ```js
-const anything = new Map(); // biome-ignore-line
+const anything = new Map(); // custom-biome-ignore-line
 ```
 
 Prefer naming the rule. A bare marker also hides rules added later, and rules
@@ -215,7 +271,7 @@ form is required there — and is what `--write-fix` emits:
 
 ```jsx
 <div>
-  {/* biome-ignore-next-line no-native-map */}
+  {/* custom-biome-ignore-next-line no-native-map */}
   {new Map().get(key)}
 </div>
 ```
@@ -238,8 +294,8 @@ custom-biome-lint --write-fix src             # apply it
 
 Placement rules:
 
-- a trailing `biome-ignore-line` when the resulting line stays within 100
-  columns, otherwise `biome-ignore-next-line` on its own line above, indented to
+- a trailing `custom-biome-ignore-line` when the resulting line stays within 100
+  columns, otherwise `custom-biome-ignore-next-line` on its own line above, indented to
   match;
 - the `{/* ... */}` form, always on its own line, when the insertion point is in
   JSX children — a trailing brace comment there would leave a whitespace-only
@@ -328,15 +384,20 @@ src/
   analyzer/                  file discovery, glob matching, single-pass runner
   semantic/                  lexical scope/binding model, identifier resolution
   rules/                     Rule trait, registry, one module per rule
-  suppress/                  biome-ignore-line / -next-line parsing
+  suppress/                  custom-biome-ignore-line / -next-line parsing
   fixer.rs                   --write-fix: safe suppression-comment placement
   autofix.rs                 --auto-fix: applies each rule's own Fix in place
   diagnostics/               Violation/Fix types and ESLint-style formatter
 fixtures/<rule_name>/        valid.js, invalid.js, suppressed.js, edge-cases.js per rule
 tests/integration.rs         end-to-end rule, config and pattern tests
 scripts/benchmark.sh         re-runnable cold/warm/rayon/rule-cost benchmark
-docs/                        architecture, rules, testing, setup, CI, migration, caching, benchmarking
+scripts/set-version.js       syncs Cargo.toml + package.json + npm/*/package.json to one version
+bin/cli.js                   npm launcher: resolves platform, execs the precompiled binary
+bin/platform.js              pure platform/arch -> package name mapping, used by cli.js and its tests
+npm/<platform>/package.json  one per supported platform, carries only the compiled binary
+docs/                        architecture, rules, testing, setup, CI, migration, caching, benchmarking, distribution
 .github/workflows/ci.yml                  build, test, fmt, clippy, audit, deny
+.github/workflows/publish.yml             tag-triggered: build all 6 targets, publish all 7 npm packages
 .github/workflows/biome-upgrade-check.yml monthly + on-demand: can we bump Biome yet?
 rustfmt.toml                  formatting config (cargo fmt)
 deny.toml                     license/advisory/source policy (cargo deny)
@@ -359,12 +420,13 @@ them or loosen the pins** — see
 ## Testing
 
 ```sh
-cargo test                                    # 152 tests: 84 unit + 67 integration + 1 doctest
+cargo test                                    # 157 tests: 88 unit + 68 integration + 1 doctest
 cargo fmt --all -- --check                    # no diff expected
 cargo clippy --all-targets -- -D warnings     # no warnings expected
 cargo audit                                   # no advisories beyond .cargo/audit.toml's ignore list
 cargo deny check                              # licenses, bans, sources all ok
 ./target/release/custom-biome-lint fixtures   # 11 errors across 6 files
+npm run test:js                               # JS launcher (bin/cli.js) tests
 ```
 
 Full procedure, including running against the real dashboard tree and how the

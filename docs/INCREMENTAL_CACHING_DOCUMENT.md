@@ -226,8 +226,47 @@ custom-biome-lint src --no-cache
 ```bash
 custom-biome-lint src -v
 # Output (in verbose mode):
-# "cache: 500 file(s) cached, 450 hit(s)"
+# "cache: 500 file(s) cached total, 450 skipped this run (already valid), 50 newly marked clean this run"
 ```
+
+Three distinct counts, not one "hit(s)" figure — an earlier version of this
+line conflated "files this run freshly analyzed and found clean" (labeled
+"hits", confusingly) with actual cache hits (files the cache already had, so
+this run never even re-read their AST). See "A `0` in `filesChecked` is not
+necessarily a bug" below for why that distinction matters.
+
+### A `0` in `filesChecked` is not necessarily a bug
+
+Running against a narrower pattern shortly after a broader one that already
+covered the same files is a real, common sequence -- e.g. a full-tree CI job
+followed by a changed-files-only job sharing the same cache directory. If
+every file the narrower run discovers is unchanged since the broader run
+found it clean, the cache correctly skips re-analyzing all of them:
+
+```bash
+custom-biome-lint 'src/**/*.{js,jsx}'                              # large run, caches everything clean
+custom-biome-lint '{src/App.jsx,src/auth/azure.js,src/auth/okta.js}' # small, overlapping run
+# ✔ No violations found (0 files checked, 3 skipped via cache in 5ms)
+```
+
+`filesChecked: 0` here does **not** mean discovery found nothing, or that the
+run silently did nothing useful -- it means every discovered file was
+already known clean and unchanged, so re-deriving that fact would have been
+wasted work. That is the cache doing exactly its job. What used to make this
+look like a false negative was purely a reporting gap: the summary line
+(and the JSON `summary` object) had no way to distinguish "0 discovered" from
+"0 needed re-checking, N already cache-valid" -- both printed the identical
+`0 files checked`. The fix was adding `filesCacheSkipped` (and the
+`, N skipped via cache` clause in the text summary, shown only when nonzero
+so the common no-cache case reads exactly as before) — not changing when the
+cache is allowed to skip a file. Making the cache re-check unchanged files
+just because the pattern scope changed would defeat the point of a
+content-hash cache.
+
+If a workflow genuinely needs every invocation to fully re-analyze its own
+file set regardless of what a previous, differently-scoped run already
+cached — e.g. a from-scratch CI job that must never trust another job's
+cache directory — pass `--no-cache`.
 
 ## Testing
 
@@ -420,6 +459,12 @@ custom-biome-lint src -vv
 # - Cache hit rate: 97.6%
 # - Time saved: 28.3 seconds
 ```
+
+Partially done: `-v` now reports an accurate split of cached/skipped/newly-cached
+counts (see "Verbose Output" above), and both the text summary and
+`--format json`'s `filesCacheSkipped` field expose the raw skip count outside
+of `-v` too. Cache size, an explicit hit-rate percentage, and an estimated
+time-saved figure are still unimplemented.
 
 ### Smart Invalidation
 

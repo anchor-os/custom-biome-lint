@@ -127,7 +127,7 @@ Use this to disable a rule wholesale. For individual findings, prefer a
 suppression comment with a justification:
 
 ```js
-const cache = new Map(); // biome-ignore-line no-native-map -- perf-critical hot path
+const cache = new Map(); // custom-biome-ignore-line no-native-map -- perf-critical hot path
 ```
 
 The `--` justification is not parsed, but it is the only record of *why* the

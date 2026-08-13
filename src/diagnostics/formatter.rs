@@ -24,6 +24,12 @@ pub struct Totals {
     pub warnings: usize,
     pub files_with_violations: usize,
     pub files_checked: usize,
+    /// Discovered files the incremental cache found already valid (unchanged
+    /// content, same enabled rules and tool version as when they were last
+    /// found clean) and so skipped re-analyzing. Distinct from
+    /// `files_checked` being 0 because nothing matched the pattern at all --
+    /// see `format_summary`, which only mentions this when it's nonzero.
+    pub cache_skipped: usize,
     /// Wall time for the whole run. `tally` leaves this zero; the CLI fills it
     /// in before printing.
     pub elapsed: Duration,
@@ -35,9 +41,10 @@ impl Totals {
     }
 }
 
-pub fn tally(reports: &[FileReport], files_checked: usize) -> Totals {
+pub fn tally(reports: &[FileReport], files_checked: usize, cache_skipped: usize) -> Totals {
     let mut totals = Totals {
         files_checked,
+        cache_skipped,
         ..Totals::default()
     };
     for report in reports {
@@ -157,6 +164,7 @@ pub fn format_reports_json(reports: &[FileReport], totals: &Totals) -> String {
             "warnings": totals.warnings,
             "filesWithViolations": totals.files_with_violations,
             "filesChecked": totals.files_checked,
+            "filesCacheSkipped": totals.cache_skipped,
             "elapsedMs": totals.elapsed.as_millis() as u64,
             "clean": totals.is_clean(),
         },
@@ -167,11 +175,24 @@ pub fn format_reports_json(reports: &[FileReport], totals: &Totals) -> String {
 }
 
 pub fn format_summary(totals: &Totals) -> String {
+    let checked = format!(
+        "{} file{} checked",
+        totals.files_checked,
+        plural(totals.files_checked)
+    );
+    // Only mentioned when nonzero: this is what tells "0 files checked
+    // because the pattern matched nothing" apart from "0 files checked
+    // because every discovered file was already known clean" -- both would
+    // otherwise print the identical, ambiguous "0 files checked".
+    let cache_note = if totals.cache_skipped > 0 {
+        format!(", {} skipped via cache", totals.cache_skipped)
+    } else {
+        String::new()
+    };
+
     if totals.is_clean() {
         return format!(
-            "\u{2714} No violations found ({} file{} checked in {})",
-            totals.files_checked,
-            plural(totals.files_checked),
+            "\u{2714} No violations found ({checked}{cache_note} in {})",
             format_elapsed(totals.elapsed)
         );
     }
@@ -189,12 +210,10 @@ pub fn format_summary(totals: &Totals) -> String {
     }
 
     format!(
-        "\u{2716} {} in {} file{} ({} file{} checked in {})",
+        "\u{2716} {} in {} file{} ({checked}{cache_note} in {})",
         counts.join(", "),
         totals.files_with_violations,
         plural(totals.files_with_violations),
-        totals.files_checked,
-        plural(totals.files_checked),
         format_elapsed(totals.elapsed)
     )
 }
@@ -231,7 +250,7 @@ mod tests {
                 "Use Immutable.js Map instead of native Map.",
             )],
         )];
-        let mut totals = tally(&reports, 1);
+        let mut totals = tally(&reports, 1, 2);
         totals.elapsed = Duration::from_millis(7);
 
         let json = format_reports_json(&reports, &totals);
@@ -241,6 +260,7 @@ mod tests {
         assert_eq!(parsed["summary"]["errors"], 1);
         assert_eq!(parsed["summary"]["warnings"], 0);
         assert_eq!(parsed["summary"]["filesChecked"], 1);
+        assert_eq!(parsed["summary"]["filesCacheSkipped"], 2);
         assert_eq!(parsed["summary"]["filesWithViolations"], 1);
         assert_eq!(parsed["summary"]["elapsedMs"], 7);
         assert_eq!(parsed["summary"]["clean"], false);
@@ -256,7 +276,7 @@ mod tests {
     #[test]
     fn json_output_omits_files_with_no_violations() {
         let reports = vec![FileReport::new(PathBuf::from("src/clean.js"), vec![])];
-        let totals = tally(&reports, 1);
+        let totals = tally(&reports, 1, 0);
 
         let json = format_reports_json(&reports, &totals);
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
@@ -267,10 +287,58 @@ mod tests {
 
     #[test]
     fn json_output_is_stable_for_a_clean_run() {
-        let totals = tally(&[], 0);
+        let totals = tally(&[], 0, 0);
         let json = format_reports_json(&[], &totals);
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         assert_eq!(parsed["files"].as_array().unwrap().len(), 0);
         assert_eq!(parsed["summary"]["clean"], true);
+    }
+
+    #[test]
+    fn json_output_carries_the_cache_skipped_count() {
+        let totals = tally(&[], 0, 3);
+        let json = format_reports_json(&[], &totals);
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(parsed["summary"]["filesChecked"], 0);
+        assert_eq!(parsed["summary"]["filesCacheSkipped"], 3);
+    }
+
+    #[test]
+    fn clean_summary_with_no_cache_activity_matches_the_original_wording() {
+        // No `, N skipped via cache` clause at all when cache_skipped is 0 --
+        // the common case (no cache, or a cold run) must read exactly as it
+        // always has.
+        let mut totals = tally(&[], 5, 0);
+        totals.elapsed = Duration::from_millis(12);
+        assert_eq!(
+            format_summary(&totals),
+            "\u{2714} No violations found (5 files checked in 12ms)"
+        );
+    }
+
+    #[test]
+    fn clean_summary_mentions_cache_skipped_files_distinctly_from_checked() {
+        // This is the exact case that reads as a false negative without the
+        // distinction: 0 checked must not look identical to "0 discovered".
+        let mut totals = tally(&[], 0, 3);
+        totals.elapsed = Duration::from_millis(5);
+        assert_eq!(
+            format_summary(&totals),
+            "\u{2714} No violations found (0 files checked, 3 skipped via cache in 5ms)"
+        );
+    }
+
+    #[test]
+    fn dirty_summary_also_mentions_cache_skipped_files_when_present() {
+        let reports = vec![FileReport::new(
+            PathBuf::from("src/a.js"),
+            vec![Violation::error("no-native-map", 1, 1, "msg")],
+        )];
+        let mut totals = tally(&reports, 1, 2);
+        totals.elapsed = Duration::from_millis(9);
+        assert_eq!(
+            format_summary(&totals),
+            "\u{2716} 1 error in 1 file (1 file checked, 2 skipped via cache in 9ms)"
+        );
     }
 }
