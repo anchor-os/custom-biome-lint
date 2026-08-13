@@ -104,6 +104,61 @@ Exit code 1 with one reported violation is success — and confirms Rust was
 never required on this machine. Also confirm the registry page renders:
 `https://www.npmjs.com/package/custom-biome-lint`.
 
+## First-time bootstrap: a brand-new package name
+
+This is a **different problem from "CI is broken"** — the release workflow can be working
+perfectly and still be unable to publish, the first time a package name has never existed on the
+registry before. It happened on this project's actual first `v0.2.0` release: the `build` job
+succeeded across all 6 platforms, but `publish` failed at the very first `npm publish` call with:
+
+```
+npm http fetch POST 404 .../oidc/token/exchange/package/custom-biome-lint-darwin-arm64
+npm verbose oidc Failed token exchange request with body message: OIDC token exchange error - package not found
+npm error code ENEEDAUTH
+```
+
+**Why:** this workflow publishes with npm Trusted Publishing (OIDC) — no `NPM_TOKEN`, no classic
+auth. A trusted publisher can only be configured from a package's *existing* npmjs.com settings
+page. There is no equivalent of PyPI's "pending publisher" for a name that has never been
+published — confirmed via npm's own docs and the still-open feature request
+[npm/cli#8544, "Allow publishing initial version with OIDC"](https://github.com/npm/cli/issues/8544).
+So for a genuinely new package name, OIDC has nothing to attach to yet, and the very first publish
+has to happen a different way. This bites every one of the 6 platform packages the first time they
+ship, and the main package too if it's ever renamed.
+
+**The one-time fix**, run once per new package name, never needed again once its trusted publisher
+is configured:
+
+```sh
+# 1. Get real, CI-built binaries for every platform from the build job that already succeeded
+#    (no need to build them all locally):
+gh run download <build-run-id> --repo anchor-os/custom-biome-lint --dir /tmp/bootstrap-artifacts
+
+# 2. Stage each into its platform package (unix ones need chmod +x; .exe ones don't):
+mkdir -p npm/darwin-arm64/bin
+cp /tmp/bootstrap-artifacts/binary-darwin-arm64/custom-biome-lint npm/darwin-arm64/bin/
+chmod +x npm/darwin-arm64/bin/custom-biome-lint
+# ...repeat for the other 5 platforms
+
+# 3. Publish each with your own npm login (npm will likely prompt for browser-based
+#    one-time-password auth — that's expected and can only be completed by a human,
+#    not from an unattended/automated shell):
+(cd npm/darwin-arm64 && npm publish --access public)
+# ...repeat for the other 5 platforms, then the main package:
+npm publish --access public
+```
+
+No `--provenance` flag here — that requires OIDC/CI attestation, which a local human-run publish
+doesn't have. Provenance starts applying from the next CI-driven release onward.
+
+**Then, for each package that just got its first publish**, go to its npmjs.com Settings page →
+Trusted Publisher, and configure it (GitHub Actions, `anchor-os/custom-biome-lint`,
+`.github/workflows/publish.yml`, environment `npm-publish`) — same configuration
+[step 2 of the release procedure](#2-let-ci-build-and-publish) already assumes exists. Once every
+package that's ever going to be published has a trusted publisher configured, this entire section
+never applies again — every subsequent version bump goes through `publish.yml` with zero manual
+`npm publish` calls, for every package, forever.
+
 ## Manual publish (CI unavailable)
 
 Only do this if the release workflow itself is broken. It requires a Rust
