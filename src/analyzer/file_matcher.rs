@@ -292,7 +292,22 @@ mod tests {
         let set = GlobSet::new("/tmp/proj/src/**/*.js");
         assert!(set.is_absolute());
         assert_eq!(set.root_dir(), PathBuf::from("/tmp/proj/src"));
-        assert!(set.root_dir().is_absolute());
+
+        // A Unix-style pattern's root_dir() has a root but, on Windows, no
+        // drive prefix -- there's no drive letter to invent for `/tmp/...`.
+        // `Path::is_absolute()` on Windows requires a prefix, so it reports
+        // false for a bare rooted-but-unprefixed path even though it's
+        // correctly rooted; `has_root()` is the check that actually holds on
+        // every platform. The property that matters in practice -- cli/mod.rs
+        // and analyzer/mod.rs always `.join()` this onto a real base directory,
+        // never use the bare value -- is exercised directly below: per
+        // PathBuf::push's documented Windows behavior, joining a rooted-but-
+        // unprefixed path replaces everything except the base's own prefix,
+        // so the result is genuinely absolute on every platform.
+        assert!(set.root_dir().has_root());
+        let joined = std::env::current_dir().unwrap().join(set.root_dir());
+        assert!(joined.is_absolute());
+
         assert!(set.is_match("/tmp/proj/src/a/b.js"));
         assert!(!set.is_match("src/a/b.js"));
     }
