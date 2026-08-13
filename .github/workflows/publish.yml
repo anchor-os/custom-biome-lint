@@ -374,16 +374,32 @@ jobs:
       # pin all six exact versions, so publishing it before every platform
       # package actually exists at that version would ship a main package
       # whose install can never succeed on the missing platform(s).
+      #
+      # Retries with backoff: npm's registry is CDN/replica-backed, so a
+      # `npm view` immediately after a successful `npm publish` can briefly
+      # 404 on read-after-write lag even though the publish itself already
+      # succeeded (observed for real: custom-biome-lint-win32-x64@0.2.1
+      # published cleanly but wasn't visible to this check ~30s later, and
+      # was visible on a rerun a couple of minutes after that). A single
+      # immediate check can't tell "still propagating" apart from "actually
+      # failed to publish," so poll instead of failing on the first miss.
       - name: Verify all platform packages are on the registry
         run: |
           set -euo pipefail
           version="${{ needs.determine-version.outputs.version }}"
           for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
             pkg="custom-biome-lint-$platform"
-            if ! npm view "$pkg@$version" version >/dev/null 2>&1; then
-              echo "::error::$pkg@$version is not on the registry; refusing to publish the main package"
-              exit 1
-            fi
+            attempt=1
+            max_attempts=15
+            until npm view "$pkg@$version" version >/dev/null 2>&1; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "::error::$pkg@$version is not on the registry after $max_attempts attempts; refusing to publish the main package"
+                exit 1
+              fi
+              echo "::notice::$pkg@$version not visible yet (registry propagation lag?), retrying in 6s (attempt $attempt/$max_attempts)"
+              attempt=$((attempt + 1))
+              sleep 6
+            done
           done
 
       # --loglevel verbose surfaces the OIDC exchange result (npm logs it only
