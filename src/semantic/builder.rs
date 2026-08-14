@@ -6,9 +6,11 @@
 //! inside expressions, JSX, or anything else without a case for every
 //! possible container.
 //!
-//! Two passes, not one: while walking, every reference identifier is
-//! recorded as `(offset, scope, name)` in `pending_refs` rather than
-//! resolved immediately. Resolution happens once, after the whole tree (and
+//! Two passes, not one: while walking, every reference identifier -- and
+//! every assignment target, which Biome models as the distinct
+//! `JsIdentifierAssignment` node type -- is recorded as
+//! `(offset, scope, name)` in `pending_refs` rather than resolved
+//! immediately. Resolution happens once, after the whole tree (and
 //! so every scope's full set of bindings) is known. Resolving eagerly
 //! during the walk would get forward references wrong -- a function that
 //! calls another function declared later in the same scope, or a variable
@@ -22,14 +24,17 @@ use std::collections::HashMap;
 
 use biome_js_syntax::{
     AnyJsArrayBindingPatternElement, AnyJsArrowFunctionParameters, AnyJsBinding,
-    AnyJsBindingPattern, AnyJsCombinedSpecifier, AnyJsForInOrOfInitializer, AnyJsForInitializer,
-    AnyJsFormalParameter, AnyJsFunctionBody, AnyJsImportClause, AnyJsNamedImportSpecifier,
-    AnyJsObjectBindingPatternMember, AnyJsParameter, JsArrowFunctionExpression, JsCatchClause,
-    JsClassDeclaration, JsDefaultImportSpecifier, JsForInStatement, JsForOfStatement,
-    JsForStatement, JsForVariableDeclaration, JsFunctionDeclaration, JsFunctionExpression,
-    JsImport, JsInitializerClause, JsNamedImportSpecifiers, JsNamespaceImportSpecifier,
-    JsParameters, JsReferenceIdentifier, JsSwitchStatement, JsSyntaxKind, JsSyntaxNode,
-    JsVariableDeclaration, JsVariableDeclarator,
+    AnyJsBindingPattern, AnyJsCombinedSpecifier, AnyJsConstructorParameter,
+    AnyJsForInOrOfInitializer, AnyJsForInitializer, AnyJsFormalParameter, AnyJsFunctionBody,
+    AnyJsImportClause, AnyJsNamedImportSpecifier, AnyJsObjectBindingPatternMember, AnyJsParameter,
+    JsArrowFunctionExpression, JsCatchClause, JsClassDeclaration, JsConstructorClassMember,
+    JsConstructorParameters, JsDefaultImportSpecifier, JsForInStatement, JsForOfStatement,
+    JsForStatement, JsForVariableDeclaration, JsFunctionBody, JsFunctionDeclaration,
+    JsFunctionExpression, JsGetterClassMember, JsGetterObjectMember, JsIdentifierAssignment,
+    JsImport, JsInitializerClause, JsMethodClassMember, JsMethodObjectMember,
+    JsNamedImportSpecifiers, JsNamespaceImportSpecifier, JsParameters, JsReferenceIdentifier,
+    JsRestParameter, JsSetterClassMember, JsSetterObjectMember, JsSwitchStatement, JsSyntaxKind,
+    JsSyntaxNode, JsVariableDeclaration, JsVariableDeclarator,
 };
 use biome_rowan::{AstNode, AstSeparatedList};
 
@@ -42,6 +47,17 @@ pub(super) fn build(root: &JsSyntaxNode) -> SemanticModel {
     let global = builder.push_scope(ScopeKind::Global, None);
     builder.walk(root, global);
     builder.finish(global)
+}
+
+/// How a callable class/object member declares its parameters. Four shapes
+/// around the same binding logic: a getter has none, a method has a
+/// `JsParameters` list, a setter has one unlisted `AnyJsFormalParameter`, and a
+/// constructor has its own `JsConstructorParameters`.
+enum MemberParams<'a> {
+    None,
+    List(&'a JsParameters),
+    Single(&'a AnyJsFormalParameter),
+    Constructor(&'a JsConstructorParameters),
 }
 
 #[derive(Default)]
@@ -118,6 +134,16 @@ impl Builder {
                     self.record_reference(&ident, scope);
                 }
             }
+            JsSyntaxKind::JS_IDENTIFIER_ASSIGNMENT => {
+                // An assignment target (`x = 1`, `x++`, `for (x of ...)`) is a
+                // use of an existing binding, not a declaration, but Biome
+                // models it as `JsIdentifierAssignment` rather than
+                // `JsReferenceIdentifier` -- so it needs recording here to be
+                // resolvable at all. See `SemanticModel::resolve_assignment`.
+                if let Some(ident) = JsIdentifierAssignment::cast_ref(node) {
+                    self.record_assignment_target(&ident, scope);
+                }
+            }
             JsSyntaxKind::JS_IMPORT => {
                 if let Some(import) = JsImport::cast_ref(node) {
                     self.handle_import(&import, scope);
@@ -146,6 +172,108 @@ impl Builder {
             JsSyntaxKind::JS_CLASS_DECLARATION => {
                 if let Some(decl) = JsClassDeclaration::cast_ref(node) {
                     self.handle_class_declaration(&decl, scope);
+                }
+            }
+            // Callable class/object members. Each owns a function scope holding
+            // its parameters, exactly like a function expression -- without
+            // these arms a method's parameters are never bound at all, and an
+            // identifier in its body resolves straight past them to whatever
+            // the enclosing scope happens to have (or to nothing).
+            JsSyntaxKind::JS_METHOD_CLASS_MEMBER => {
+                if let Some(member) = JsMethodClassMember::cast_ref(node) {
+                    self.handle_callable_member(
+                        member_name(member.name().ok()),
+                        member
+                            .parameters()
+                            .ok()
+                            .as_ref()
+                            .map_or(MemberParams::None, MemberParams::List),
+                        member.body().ok(),
+                        scope,
+                    );
+                }
+            }
+            JsSyntaxKind::JS_METHOD_OBJECT_MEMBER => {
+                if let Some(member) = JsMethodObjectMember::cast_ref(node) {
+                    self.handle_callable_member(
+                        member_name(member.name().ok()),
+                        member
+                            .parameters()
+                            .ok()
+                            .as_ref()
+                            .map_or(MemberParams::None, MemberParams::List),
+                        member.body().ok(),
+                        scope,
+                    );
+                }
+            }
+            // A setter takes exactly one parameter and is not wrapped in a
+            // `JsParameters` list; a getter takes none. Both still need their
+            // own scope so declarations in the body don't leak outward.
+            JsSyntaxKind::JS_SETTER_CLASS_MEMBER => {
+                if let Some(member) = JsSetterClassMember::cast_ref(node) {
+                    self.handle_callable_member(
+                        member_name(member.name().ok()),
+                        member
+                            .parameter()
+                            .ok()
+                            .as_ref()
+                            .map_or(MemberParams::None, MemberParams::Single),
+                        member.body().ok(),
+                        scope,
+                    );
+                }
+            }
+            JsSyntaxKind::JS_SETTER_OBJECT_MEMBER => {
+                if let Some(member) = JsSetterObjectMember::cast_ref(node) {
+                    self.handle_callable_member(
+                        member_name(member.name().ok()),
+                        member
+                            .parameter()
+                            .ok()
+                            .as_ref()
+                            .map_or(MemberParams::None, MemberParams::Single),
+                        member.body().ok(),
+                        scope,
+                    );
+                }
+            }
+            JsSyntaxKind::JS_GETTER_CLASS_MEMBER => {
+                if let Some(member) = JsGetterClassMember::cast_ref(node) {
+                    self.handle_callable_member(
+                        member_name(member.name().ok()),
+                        MemberParams::None,
+                        member.body().ok(),
+                        scope,
+                    );
+                }
+            }
+            JsSyntaxKind::JS_GETTER_OBJECT_MEMBER => {
+                if let Some(member) = JsGetterObjectMember::cast_ref(node) {
+                    self.handle_callable_member(
+                        member_name(member.name().ok()),
+                        MemberParams::None,
+                        member.body().ok(),
+                        scope,
+                    );
+                }
+            }
+            // A constructor's parameters live in `JsConstructorParameters`, a
+            // different node type from a method's `JsParameters` (it is the one
+            // that can hold TS parameter properties), so it needs its own arm
+            // rather than sharing the method one.
+            JsSyntaxKind::JS_CONSTRUCTOR_CLASS_MEMBER => {
+                if let Some(member) = JsConstructorClassMember::cast_ref(node) {
+                    self.handle_callable_member(
+                        None,
+                        member
+                            .parameters()
+                            .ok()
+                            .as_ref()
+                            .map_or(MemberParams::None, MemberParams::Constructor),
+                        member.body().ok(),
+                        scope,
+                    );
                 }
             }
             JsSyntaxKind::JS_BLOCK_STATEMENT => {
@@ -192,6 +320,15 @@ impl Builder {
             return;
         };
         let offset = usize::from(identifier.syntax().text_trimmed_range().start());
+        self.pending_refs
+            .push((offset, scope, token.text_trimmed().to_string()));
+    }
+
+    fn record_assignment_target(&mut self, target: &JsIdentifierAssignment, scope: ScopeId) {
+        let Ok(token) = target.name_token() else {
+            return;
+        };
+        let offset = usize::from(target.syntax().text_trimmed_range().start());
         self.pending_refs
             .push((offset, scope, token.text_trimmed().to_string()));
     }
@@ -311,32 +448,32 @@ impl Builder {
     fn bind_parameters(&mut self, params: &JsParameters, scope: ScopeId) {
         for item in params.items().iter().flatten() {
             match item {
-                AnyJsParameter::AnyJsFormalParameter(AnyJsFormalParameter::JsFormalParameter(
-                    param,
-                )) => {
-                    if let Ok(pattern) = param.binding() {
-                        self.collect_pattern_bindings(
-                            &pattern,
-                            BindingKind::Parameter,
-                            scope,
-                            scope,
-                        );
-                    }
-                    self.walk_default(param.initializer(), scope);
+                AnyJsParameter::AnyJsFormalParameter(param) => {
+                    self.bind_formal_parameter(&param, scope)
                 }
-                AnyJsParameter::JsRestParameter(param) => {
-                    if let Ok(pattern) = param.binding() {
-                        self.collect_pattern_bindings(
-                            &pattern,
-                            BindingKind::Parameter,
-                            scope,
-                            scope,
-                        );
-                    }
-                }
-                AnyJsParameter::AnyJsFormalParameter(AnyJsFormalParameter::JsBogusParameter(_))
-                | AnyJsParameter::TsThisParameter(_) => {}
+                AnyJsParameter::JsRestParameter(param) => self.bind_rest_parameter(&param, scope),
+                AnyJsParameter::TsThisParameter(_) => {}
             }
+        }
+    }
+
+    /// One `a`, `{ a }`, or `a = default` parameter, wherever it appears -- a
+    /// parameter list, a setter's single unlisted parameter, or a constructor's
+    /// own parameter list, which are three different node types around the same
+    /// `AnyJsFormalParameter`.
+    fn bind_formal_parameter(&mut self, param: &AnyJsFormalParameter, scope: ScopeId) {
+        let AnyJsFormalParameter::JsFormalParameter(param) = param else {
+            return;
+        };
+        if let Ok(pattern) = param.binding() {
+            self.collect_pattern_bindings(&pattern, BindingKind::Parameter, scope, scope);
+        }
+        self.walk_default(param.initializer(), scope);
+    }
+
+    fn bind_rest_parameter(&mut self, param: &JsRestParameter, scope: ScopeId) {
+        if let Ok(pattern) = param.binding() {
+            self.collect_pattern_bindings(&pattern, BindingKind::Parameter, scope, scope);
         }
     }
 
@@ -429,6 +566,60 @@ impl Builder {
                 AnyJsFunctionBody::AnyJsExpression(expr) => {
                     self.walk(expr.syntax(), function_scope);
                 }
+            }
+        }
+    }
+
+    /// One function scope for a callable class/object member -- method,
+    /// constructor, getter or setter -- holding its parameters and body.
+    ///
+    /// Deliberately does not bind the member's *name* anywhere: a method name
+    /// is a property of the class or object, not a binding in any lexical
+    /// scope, so there is nothing for an identifier to resolve to. A *computed*
+    /// name is different -- see the walk of `name` below.
+    fn handle_callable_member(
+        &mut self,
+        name: Option<JsSyntaxNode>,
+        parameters: MemberParams<'_>,
+        body: Option<JsFunctionBody>,
+        scope: ScopeId,
+    ) {
+        // A computed name (`{ [key]() {} }`, `class C { get [key]() {} }`) is an
+        // expression evaluated in the *enclosing* scope, before the member's own
+        // scope exists -- so it is walked here, against `scope`, not
+        // `function_scope`. A literal name has nothing to record and walking it
+        // is a harmless no-op, the same way `collect_pattern_bindings` treats a
+        // destructuring pattern's literal key.
+        if let Some(name) = name {
+            self.walk(&name, scope);
+        }
+
+        let function_scope = self.push_scope(ScopeKind::Function, Some(scope));
+        match parameters {
+            MemberParams::None => {}
+            MemberParams::List(parameters) => self.bind_parameters(parameters, function_scope),
+            MemberParams::Single(parameter) => {
+                self.bind_formal_parameter(parameter, function_scope)
+            }
+            MemberParams::Constructor(parameters) => {
+                for parameter in parameters.parameters().iter().flatten() {
+                    match parameter {
+                        AnyJsConstructorParameter::AnyJsFormalParameter(parameter) => {
+                            self.bind_formal_parameter(&parameter, function_scope)
+                        }
+                        AnyJsConstructorParameter::JsRestParameter(parameter) => {
+                            self.bind_rest_parameter(&parameter, function_scope)
+                        }
+                        // `constructor(public x)` is TypeScript-only, and this
+                        // tool analyzes .js/.jsx.
+                        AnyJsConstructorParameter::TsPropertyParameter(_) => {}
+                    }
+                }
+            }
+        }
+        if let Some(body) = body {
+            for statement in body.statements() {
+                self.walk(statement.syntax(), function_scope);
             }
         }
     }
@@ -721,4 +912,13 @@ impl Builder {
             );
         }
     }
+}
+
+/// The syntax node of a class/object member name, for walking a computed
+/// name's expression. Generic over the two name enums (`AnyJsClassMemberName`
+/// and `AnyJsObjectMemberName`) since only the node is needed.
+fn member_name<N: AstNode<Language = biome_js_syntax::JsLanguage>>(
+    name: Option<N>,
+) -> Option<JsSyntaxNode> {
+    name.map(|name| name.syntax().clone())
 }

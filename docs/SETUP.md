@@ -239,8 +239,8 @@ cargo install --path .
 ## 5. Confirm it works
 
 ```sh
-cargo test                             # expect 157 passing
-./target/release/custom-biome-lint fixtures   # expect 11 errors in 6 files, exit 1
+cargo test                             # expect 209 passing
+./target/release/custom-biome-lint fixtures   # expect 52 errors in 10 files, exit 1
 ```
 
 If both match, the setup is good. [TESTING.md](TESTING.md) covers the full
@@ -249,6 +249,6 @@ verification procedure, including running against the real dashboard tree.
 ## Next steps
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — how the tool is built and why
-- [RULES.md](RULES.md) — what the three rules catch, and their known quirks
+- [RULES.md](RULES.md) — what the seven rules catch, their known quirks, and how to opt into the two default-off rules
 - [ADDING_A_RULE.md](ADDING_A_RULE.md) — extending it
 - [CI_CD_INTEGRATION.md](CI_CD_INTEGRATION.md) — wiring it into hooks and pipelines

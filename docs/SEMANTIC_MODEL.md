@@ -11,16 +11,23 @@ lazily and cached, so a rule that never calls it never pays for it, and a rule
 that does call it shares the same model every other rule that asked for it
 already got.
 
-## Status: backs all three existing rules
+## Status: backs every rule
 
-All three rules resolve the identifiers they care about against this model
-rather than matching by name alone — `no-native-map` for `Map`,
+Every rule resolves the identifiers it cares about against this model rather
+than matching by name alone — `no-native-map` for `Map`,
 `no-arrow-function-create-selector` and `reselect-arity-match` for
 `createSelector` (the latter only for a bare-identifier callee; see "Migrating
 the existing rules" below for why the member-expression form,
-`x.createSelector(...)`, was deliberately left alone). This was not the
-original plan — see that section for why the initial call was to leave the
-rules untouched, and what changed.
+`x.createSelector(...)`, was deliberately left alone), and the four
+parameter-mutation rules for the identifier an assignment target is rooted in.
+For the original three this was not the original plan — see that section for why
+the initial call was to leave them untouched, and what changed.
+
+For the parameter-mutation rules, resolution is not an optimization but a
+correctness requirement: without it, a local variable that happens to share a
+name with a destructured parameter in an enclosing scope would be misclassified
+by name alone, and a mutation several arrow functions away from its parameter's
+declaration would not be attributable at all.
 
 ## What it can answer
 
@@ -52,6 +59,28 @@ A `None` result means the name is unbound in this file: a global/host
 built-in (`console`, `Math`, `window`, ...) or a genuine typo, neither of
 which this model tries to tell apart.
 
+### Assignment targets resolve through a second method
+
+Biome models the identifier being *written to* as `JsIdentifierAssignment`, a
+different node type from the `JsReferenceIdentifier` used in read positions —
+`x` in `x = 1` and `x` in `f(x)` are not the same kind of node. Both are uses of
+an existing binding and both resolve identically, so there is a parallel entry
+point rather than a second mechanism:
+
+```rust
+// The `x` in `x = 1`, `x++`, `for (x of list)`, or `[x] = pair`.
+if let Some(binding) = model.resolve_assignment(&identifier_assignment) {
+    // same Binding, same shadowing rules as `resolve`
+}
+```
+
+Both delegate to one offset-keyed lookup, and the builder records assignment
+targets into the same `pending_refs` list as read references, so the two-pass
+hoisting behaviour described below applies to them too. Without this, an
+assignment target could not be resolved at all — which is what
+`destructure-default-param-assign` needs in order to tell a destructured
+parameter from a same-named local.
+
 ## Scopes and bindings
 
 Five scope kinds, forming a parent/child tree rooted at one `Global` scope
@@ -80,16 +109,23 @@ their own scope.
 
 `src/semantic/builder.rs` walks the tree exactly once, matching on
 `JsSyntaxKind` for the handful of constructs that create a scope or a
-binding (functions, arrows, blocks, loops, catch clauses, variable
-declarations, imports, class declarations) and otherwise just recursing into
-every child node unchanged. That fallback is what lets the walk find an arrow
+binding (functions, arrows, class/object methods, getters, setters, blocks,
+loops, catch clauses, variable declarations, imports, class declarations) and
+otherwise just recursing into every child node unchanged. That fallback is what lets the walk find an arrow
 function nested three levels deep inside a call argument or a JSX expression
 container without a special case for every possible container node — nothing
 about *how* a scope-creating construct is reached matters, only that it's
 reached.
 
+A method, getter or setter gets a `Function` scope holding its parameters, just
+like a function expression — a getter has none, and a setter's single parameter
+is not wrapped in a `JsParameters` list, but both still own a scope so
+declarations in their bodies don't leak outward. Their *names* are deliberately
+not bound anywhere: a method name is a property of the class or object, not a
+binding any identifier can resolve to.
+
 Resolution happens in a second, much cheaper pass, not during the walk:
-every reference identifier is recorded as `(byte offset, current scope, name)`
+every reference identifier and assignment target is recorded as `(byte offset, current scope, name)`
 while walking, and only resolved against the *complete* scope tree afterward.
 Resolving eagerly during the walk would get forward references wrong — a
 function that calls another function declared later in the same scope, or a

@@ -1,4 +1,5 @@
 use crate::analyzer::runner::FileContext;
+use crate::config::RuleSeverity;
 use crate::diagnostics::Violation;
 
 /// A single lint rule.
@@ -21,4 +22,15 @@ pub trait Rule: Send + Sync {
     fn supported_extensions(&self) -> &'static [&'static str];
 
     fn check(&self, file: &FileContext) -> Vec<Violation>;
+
+    /// The severity this rule runs at when `ignoreBiomeExtensionRules` has no
+    /// entry for it.
+    ///
+    /// Defaults to [`RuleSeverity::Error`] — every rule is on unless explicitly
+    /// turned off. Override with [`RuleSeverity::Off`] for a rule whose
+    /// findings are opinionated enough that a consuming repo should have to opt
+    /// in, by setting it to `"warn"`/`"error"` in `ignoreBiomeExtensionRules`.
+    fn default_severity(&self) -> RuleSeverity {
+        RuleSeverity::Error
+    }
 }

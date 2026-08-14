@@ -54,6 +54,15 @@ CONFIGURATION:
     The array form is shorthand for \"off\". The object form also accepts
     \"warn\" (reported but does not fail the run) and \"error\" (default).
 
+    Two rules ship OFF and only run once given a severity here:
+
+        bare-arrow-param-prop-assign   property mutation through an arrow's
+                                       unparenthesized single parameter
+        deep-param-prop-assign         plain-parameter mutation 2+ levels deep
+
+    For those two, no entry means \"off\"; every other rule defaults to
+    \"error\". Run with -v to see which rules are enabled and why.
+
 SUPPRESSIONS:
     // custom-biome-ignore-line rule-name[, rule-name2]
     // custom-biome-ignore-next-line rule-name[, rule-name2]

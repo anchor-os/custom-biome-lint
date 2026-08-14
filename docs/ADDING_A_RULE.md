@@ -88,6 +88,8 @@ pub trait Rule: Send + Sync {
     fn description(&self) -> &'static str;
     fn supported_extensions(&self) -> &'static [&'static str];
     fn check(&self, file: &FileContext) -> Vec<Violation>;
+
+    fn default_severity(&self) -> RuleSeverity { RuleSeverity::Error }
 }
 ```
 
@@ -97,6 +99,7 @@ pub trait Rule: Send + Sync {
 | `description` | One line, shown under `-v`. |
 | `supported_extensions` | Leading dots, e.g. `[".js", ".jsx"]`. Use the `JS_EXTENSIONS` constant unless your rule needs a different set. The runner skips files whose extension is not listed. |
 | `check` | Detection logic. Receives an already-parsed file. |
+| `default_severity` | Has a default; override only to ship a rule off by default. See below. |
 
 There is no `default_pattern` on the trait: the CLI's default glob is derived by
 `RuleRegistry::default_pattern()` from the union of every registered rule's
@@ -160,6 +163,44 @@ comment will not be where they expect it.
 `Violation::error(name, line, col, message)` is the common case.
 `Violation::warning(...)` exists for non-blocking findings — warnings appear in
 output but the tool's exit code is driven by errors.
+
+### Default severity: shipping a rule off by default
+
+Every rule is on unless `ignoreBiomeExtensionRules` turns it off. A rule can
+invert that by overriding one trait method:
+
+```rust
+fn default_severity(&self) -> RuleSeverity {
+    RuleSeverity::Off
+}
+```
+
+With no config entry the rule then never runs; a consuming repo opts in by
+giving it a severity:
+
+```json
+{ "ignoreBiomeExtensionRules": { "my-rule": "error" } }
+```
+
+`RuleRegistry::enabled`/`ignored` resolve this through
+`PackageConfig::severity(name, rule.default_severity())`, which — unlike
+`severity_override` — keeps `"off"` and "no entry" apart. **Use `severity`, not
+`severity_override`, for any "does this rule run" question**; `severity_override`
+collapses both to `None`, which is right for overriding a violation's severity
+and wrong for deciding whether the rule runs at all.
+
+Reach for this when a rule's findings are opinionated or style-contingent enough
+that a repo should have to ask for them — `bare-arrow-param-prop-assign` and
+`deep-param-prop-assign` are the only two rules that do (see
+[RULES.md](RULES.md#opting-into-the-two-default-off-rules)); the first is
+meaningless in a repo that parenthesizes arrow parameters, and the second flags a
+pattern some codebases use deliberately. A rule that is simply *noisy* is usually
+a rule with a detection bug, not a candidate for this.
+
+Two things this does not change: an off-by-default rule still shows up in
+`registry.all()` (so `--help`/docs list it), and it still needs the full fixture
+set — its fixtures are exercised by `cargo test`, which runs a named rule
+directly, rather than by a CLI run over `fixtures/`.
 
 ### Autofix (optional)
 
@@ -350,6 +391,8 @@ The last command should now include your rule's findings from
 - [ ] Rule documented in [RULES.md](RULES.md), including any known limitations
 - [ ] Decided whether the rule can attach a `Fix` (only if unambiguous — see
       Autofix above); either way, no silent guessing
+- [ ] Decided whether the rule ships on (the default) or needs
+      `default_severity() -> Off`
 - [ ] `cargo test` and `cargo clippy --all-targets` are clean
 
 ## Finding the right Biome AST types

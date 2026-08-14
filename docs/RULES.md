@@ -1,13 +1,15 @@
 # Rules
 
-Three rules, each a behaviour-for-behaviour port of a custom ESLint rule from
-`eslint-rules/`. The ports are deliberately faithful rather than "improved" —
-including reproducing one known false-positive class, `no-native-map`'s
-`mapboxgl.Map` — so that turning this tool on produces exactly the findings
-the old ESLint setup produced, no more and no less. That property is what
-made the initial migration verifiable.
+Seven rules in two groups.
 
-One deliberate exception since then: all three rules now resolve
+**The original three** are behaviour-for-behaviour ports of custom ESLint rules
+from `eslint-rules/`. The ports are deliberately faithful rather than
+"improved" — including reproducing one known false-positive class,
+`no-native-map`'s `mapboxgl.Map` — so that turning this tool on produces
+exactly the findings the old ESLint setup produced, no more and no less. That
+property is what made the initial migration verifiable.
+
+One deliberate exception since then: all three resolve
 `createSelector`/`Map` identifiers against
 [the semantic model](SEMANTIC_MODEL.md) instead of matching by name alone,
 which changes output in the one place semantic resolution and ESLint parity
@@ -16,11 +18,39 @@ actually conflicted — see each rule's own section, and
 the reasoning. A file that never shadows these names or imports them from an
 unrelated module — the overwhelming common case — sees no change at all.
 
+**The four parameter-mutation rules** are not ports. They close specific,
+measured gaps between ESLint's `no-param-reassign` (removed) and Biome's
+`lint/style/noParameterAssign` (enabled here with
+`propertyAssignment: "deny"`), which turns out to reach only *plain identifier
+parameters*, at *one* level of property depth, in a *parenthesized* parameter
+list. Each of the four gaps below was confirmed by direct repro against Biome
+2.5.8 rather than inferred from its documentation:
+
+```js
+function plainParam(a)        { a = 5; }          // Biome flags
+function plainPropAssign(d)   { d.token = 'x'; }  // Biome flags
+function depthOne(acc, x)     { acc[x] = 1; }     // Biome flags
+const bareReassign = d =>     { d = 5; };         // Biome flags
+
+function destrReassign({ b })  { b = 'x'; }        // MISSED -> rule 1
+function destrProp({ c })      { c.token = 'x'; }  // MISSED -> rule 2
+const bareProp = d =>          { d.token = 'x'; }; // MISSED -> rule 3
+function depthTwo(acc, x, y)   { acc[x][y] = 1; }  // MISSED -> rule 4
+```
+
+Rules 1 and 2 are always on, like the original three. Rules 3 and 4 ship
+**off by default** and must be opted into per repo — see
+[Opting into the two default-off rules](#opting-into-the-two-default-off-rules).
+
 | Rule | Guards against | Extensions | `--auto-fix` |
 | --- | --- | --- | --- |
 | [`no-native-map`](#no-native-map) | Native `Map` leaking into Immutable.js state | `.js`, `.jsx` | No — flags known false positives (below), so no rewrite is always safe |
 | [`no-arrow-function-create-selector`](#no-arrow-function-create-selector) | Broken Reselect memoization | `.js`, `.jsx` | Yes — unwraps the arrow |
 | [`reselect-arity-match`](#reselect-arity-match) | Silently dropped selector inputs | `.js`, `.jsx` | No — the fix would have to guess which side of the mismatch is wrong |
+| [`destructure-default-param-assign`](#destructure-default-param-assign) | Reassigning a destructured parameter | `.js`, `.jsx` | No — the fix renames a binding and every reference to it, which is not one byte range |
+| [`destructure-param-prop-assign`](#destructure-param-prop-assign) | Mutating a destructured parameter's properties, at any depth | `.js`, `.jsx` | No — the right copy shape (spread, deep clone, Immutable update) can't be inferred from the mutation site |
+| [`bare-arrow-param-prop-assign`](#bare-arrow-param-prop-assign) **(off by default)** | Property mutation Biome misses on an arrow's unparenthesized single parameter | `.js`, `.jsx` | No — adding parens would just hand the same mutation to Biome to re-report |
+| [`deep-param-prop-assign`](#deep-param-prop-assign) **(off by default)** | Plain-parameter mutation 2+ levels deep, past where Biome stops looking | `.js`, `.jsx` | No — same "would have to guess the copy shape" as above |
 
 ---
 
@@ -352,7 +382,321 @@ const selectVisible = createSelector(
 
 ---
 
+## `destructure-default-param-assign`
+
+**Message:** `Reassigning destructured parameter "<name>" mutates a local
+binding a caller can't see change. Use a new local variable instead.`
+
+**Source:** `src/rules/destructure_default_param_assign.rs`
+
+### What it catches
+
+Reassignment of a binding introduced by object or array destructuring in a
+parameter list — the destructuring equivalent of `noParameterAssign`'s
+plain-identifier check. Biome stops at the parameter's own top-level binding
+shape; it never asks "did this identifier come from a destructuring pattern in
+the parameter list", so none of these are visible to it.
+
+The hazard is the one `noParameterAssign` already exists to catch: the caller
+cannot see the change, and the reassigned name no longer means what the
+signature says it means for the rest of the function.
+
+### Before / after
+
+```js
+// ✗ Flagged — the binding itself is reassigned
+const generateBarcodeSuggestions = ({ prefix = '' }) => {
+  if (prefix.length >= 8) {
+    prefix = '';
+  }
+  return prefix;
+};
+```
+
+```js
+// ✓ Clean — a new local, leaving the parameter binding alone
+const generateBarcodeSuggestions = ({ prefix = '' }) => {
+  const normalised = prefix.length >= 8 ? '' : prefix;
+  return normalised;
+};
+```
+
+### What counts as reassignment
+
+The same set `noParameterAssign` itself walks, plus the destructuring-assignment
+forms: `b = x`, `b += 1`, `b++`, `--b`, `for (b of list)`, `for (b in obj)`,
+`[b] = pair`, `({ b } = source)`.
+
+Nesting depth and defaults are irrelevant — `{ b }`, `{ b = '' }`,
+`{ outer: { inner } }`, `{ items: [{ id }] }` and `{ a, ...rest }` all declare
+destructured parameters, and reassigning any of their bindings is reported
+identically.
+
+### Why there is no bare-arrow variant
+
+JS requires parentheses around a destructured parameter: `{ x } => ...` is a
+syntax error. A bare single arrow parameter can therefore never be
+destructured, so this rule has no unparenthesized case to handle — unlike
+[`bare-arrow-param-prop-assign`](#bare-arrow-param-prop-assign), which exists
+precisely because plain parameters *do* have one.
+
+### Boundary with `destructure-param-prop-assign`
+
+Both rules visit the same assignment nodes; the split is purely the assignment
+target's shape. A bare identifier target is this rule's; a member/index chain is
+the other's. Neither can report the same *assignment target* as the other —
+though one line can carry both, since it can carry two writes:
+`function f({ b, c }) { b = 1; c.token = 2; }` is one finding from each.
+
+---
+
+## `destructure-param-prop-assign`
+
+**Message:** `Mutating a property of destructured parameter "<name>" changes
+data the caller still holds a reference to. Copy it first.`
+
+**Source:** `src/rules/destructure_param_prop_assign.rs`
+
+### What it catches
+
+Property or index writes (dot or bracket, **any depth**) through a binding
+introduced by destructuring in a parameter list — the destructuring equivalent
+of `noParameterAssign`'s `propertyAssignment: "deny"` check.
+
+This is the rule the dashboard's saga and reducer layer needs: those functions
+are built almost entirely around destructured `action`/`payload`/`state`
+parameters, and an in-place write on one destructured field silently corrupts
+state a sibling saga or reducer reads later.
+
+### Before / after
+
+```js
+// ✗ Flagged — mutates the caller's action object
+export function* getSMSSessionsOfCustomersSaga({ payload }) {
+  payload.token = yield call(getIdToken);
+}
+```
+
+```js
+// ✓ Clean — copy, then mutate the copy
+export function* getSMSSessionsOfCustomersSaga({ payload }) {
+  const authed = { ...payload, token: yield call(getIdToken) };
+}
+```
+
+### Depth independence is the point
+
+Biome's own rule catches exactly one level and misses two or more. This one
+walks the leftmost chain to its root identifier, so all three of these report
+identically:
+
+```js
+c.token = 'x';                       // depth 1 — Biome also catches this shape
+acc[k].total = 1;                    // depth 2 — Biome misses
+state.tours[id].priceBands = {};     // depth 3 — Biome misses
+state['tours'][id].priceBands = {};  // mixed notation, same walk
+```
+
+Parentheses inside a chain are transparent and do not count as a hop.
+
+### Known non-goals
+
+Both are gaps, deliberately, not bugs — and both are stated here so they are not
+re-reported later as missed cases:
+
+- **Aliasing.** `const local = payload; local.token = 'x'` is not flagged.
+  `local`'s own binding is a `const`, not a parameter, so it resolves out of
+  scope. A rule that tracked this would need real dataflow analysis, which is
+  out of scope for a tree-walking `check()` — the same posture
+  `no-arrow-function-create-selector` takes for its member-expression callee
+  gap.
+- **Mutating method calls.** `payload.items.push(x)` mutates in effect but
+  contains no assignment node at all. This matches `noParameterAssign`'s own
+  scope — it does not catch `d.items.push(x)` either.
+
+---
+
+## `bare-arrow-param-prop-assign`
+
+**Off by default.** See
+[Opting into the two default-off rules](#opting-into-the-two-default-off-rules).
+
+**Message:** `Mutating a property of parameter "<name>" is invisible to Biome's
+noParameterAssign because this arrow's single parameter has no parens. Add
+parens or copy the value first.`
+
+**Source:** `src/rules/bare_arrow_param_prop_assign.rs`
+
+### What it catches
+
+Property or index writes through a **plain** parameter, when that parameter is
+the sole, unparenthesized parameter of an arrow function. This is a plain-param
+case in principle — the shape `noParameterAssign` is supposed to cover — but
+Biome misses it for this exact AST shape:
+
+```js
+export const bare  =  d  => { d.token = 'x'; };  // NOT flagged by Biome
+export const paren = (d) => { d.token = 'x'; };  // flagged by Biome
+```
+
+The cause is structural, not a formatter setting: an arrow with a single
+unparenthesized parameter binds it directly under the arrow as an
+`AnyJsBinding`, with no `JsParameters` node — unlike `(d) => ...`,
+`(a, b) => ...` and `function f(d) {}`, all of which Biome handles. A repo
+formatting with `arrowParentheses: "asNeeded"` (as the dashboard does) just
+makes the missed shape the common one; Biome's formatter actively strips the
+parens its own checker needs.
+
+### Before / after
+
+```js
+// ✗ Flagged
+initialValues.cabins.forEach(cabin => {
+  cabin.id = undefined;
+});
+```
+
+```js
+// ✓ Clean — a copy per element instead of mutating the caller's objects
+const cabins = initialValues.cabins.map(({ id, ...rest }) => rest);
+```
+
+### Property mutation only — reassignment is Biome's
+
+`d => { d = 5; }` is **not** flagged. The obvious assumption is that
+reassignment is missed for the same structural reason property mutation is; the
+repro says otherwise — Biome flags bare reassignment. The asymmetry was checked
+rather than assumed, and this rule stays out of what Biome already reports.
+
+### Resolution is by binding, not nesting
+
+The mutation need not sit in the body of the arrow that declares the parameter:
+
+```js
+arr.map(item => other.forEach(x => { item.y = 1; })); // attributed to `item`
+```
+
+`item` resolves through [the semantic model](SEMANTIC_MODEL.md) regardless of
+how many arrows separate the write from the declaration, and a local shadowing
+the parameter correctly resolves to the local.
+
+---
+
+## `deep-param-prop-assign`
+
+**Off by default.** See
+[Opting into the two default-off rules](#opting-into-the-two-default-off-rules).
+
+**Message:** `Mutating parameter "<name>" 2+ levels deep ("<chain>") is
+invisible to Biome's noParameterAssign, which only tracks one level. Copy the
+value first.`
+
+**Source:** `src/rules/deep_param_prop_assign.rs`
+
+### What it catches
+
+Property or index writes through a **plain** parameter at chain depth 2 or more,
+whatever the arrow-parens style. Biome tracks exactly one level:
+
+```js
+function f(acc)   { acc[x] = 1; }                       // flagged by Biome — depth 1
+function f(acc)   { acc[x][y] = 1; }                    // NOT flagged — depth 2
+function f(accum) { accum.tours[id].priceBands = {}; }  // NOT flagged — depth 3
+```
+
+This is the plain-parameter counterpart to
+[`destructure-param-prop-assign`](#destructure-param-prop-assign)'s depth
+independence: same chain walk, inverted eligibility (plain here, destructured
+there), so a destructured root never trips both.
+
+### Before / after
+
+```js
+// ✗ Flagged — depth 3 through a plain parameter
+export function collect(accum, bookingTypeId, priceBands) {
+  accum.tours[bookingTypeId].priceBands = priceBands;
+}
+```
+
+```js
+// ✓ Clean — build the new shape rather than writing into the caller's
+export function collect(accum, bookingTypeId, priceBands) {
+  return {
+    ...accum,
+    tours: {
+      ...accum.tours,
+      [bookingTypeId]: { ...accum.tours[bookingTypeId], priceBands }
+    }
+  };
+}
+```
+
+### The depth floor is deliberate
+
+Depth 1 is exactly what `noParameterAssign` already reports. Re-flagging it
+here, under a second rule name, would be duplicate noise on a line the user is
+already being told about — so this rule starts at 2.
+
+### Overlap with `bare-arrow-param-prop-assign` — both fire
+
+A bare-arrow parameter mutated 2+ levels deep trips both opt-in rules:
+
+```js
+item => {
+  item.a.b = 1; // bare parameter (rule 3) AND depth 2 (rule 4)
+};
+```
+
+**Both report, independently.** They test genuinely different structural
+conditions — arrow-parens shape versus chain depth — each true or false
+regardless of the other, and each separately worth suppressing: a reviewer might
+parenthesize the arrow (satisfying rule 3, handing the mutation to Biome) while
+still wanting the depth watched. Coupling rule 4 to rule 3's detection would
+make it fragile to rule 3 changing later, for a benefit the suppression syntax
+already covers — one marker carries both names:
+
+```js
+item => {
+  // custom-biome-ignore-next-line bare-arrow-param-prop-assign, deep-param-prop-assign
+  item.a.b = 1;
+};
+```
+
+On the dashboard, 21 lines trip both rules; the rest trip exactly one.
+
+---
+
+## Opting into the two default-off rules
+
+`bare-arrow-param-prop-assign` and `deep-param-prop-assign` are the only rules
+whose `default_severity()` is `off`. With no configuration they never run — the
+same posture as Biome's own `noParameterAssign.propertyAssignment: "allow"`
+default. Turn them on by giving them a severity in `package.json`:
+
+```json
+{
+  "ignoreBiomeExtensionRules": {
+    "bare-arrow-param-prop-assign": "error",
+    "deep-param-prop-assign": "warn"
+  }
+}
+```
+
+No entry → the rule never runs. `"warn"`/`"error"` → it runs at that severity.
+`"off"` → the same as no entry, stated explicitly.
+
+This reuses the existing severity mechanism rather than adding a second,
+Biome-shaped config namespace; see
+[ADDING_A_RULE.md](ADDING_A_RULE.md#default-severity-shipping-a-rule-off-by-default)
+for how `default_severity()` works and when a new rule should use it. Unlike the
+other five rules, these two appear in the `-v` "rules ignored" listing when
+unconfigured, because that is what unconfigured means for them.
+
+---
+
 ## Real-codebase findings summary
+
+### The original three rules
 
 Run against the dashboard's `src/` tree
 (`custom-biome-lint 'src/**/*.{js,jsx}'`):
@@ -394,6 +738,51 @@ the 8 findings one-for-one. The only other file mentioning the rule name is
 `scripts/rebuildEslintDisables.js`, which references it as a string in tooling
 rather than suppressing anything. Treat 8 as the real number.
 
+### The four parameter-mutation rules
+
+Run against the dashboard's `src/` and `cypress/` trees (4,416 files) with both
+opt-in rules enabled, at dashboard commit `be48c6d81`:
+
+| Rule | Findings | Files |
+| --- | --- | --- |
+| `destructure-default-param-assign` | 4 | 4 |
+| `destructure-param-prop-assign` | 8 | 7 |
+| `bare-arrow-param-prop-assign` | 81 | 31 |
+| `deep-param-prop-assign` | 137 | 34 |
+
+**Positional parity with the removed ESLint rule is the verification here, the
+same way adjacency to existing `eslint-disable` comments verified
+`no-native-map`'s port.** 222 of the 230 findings (96%) land on a line that
+already carries an `eslint-disable`/`eslint-disable-next-line` for
+`no-param-reassign` — i.e. on precisely the lines the dashboard's own ESLint
+setup was suppressing before the rule was removed. 21 lines trip both opt-in
+rules, consistent with the documented decision to let them fire independently.
+
+The 8 findings *not* on a previously-suppressed line were each read by hand and
+are all genuine:
+
+- 5 in `src/components/VesselAddEdit/index.js` sit under an inline
+  `/*eslint no-param-reassign: ["error", { "props": false }]*/` comment, which
+  turned ESLint's property check off for the rest of that file. This tool
+  deliberately does not read `eslint-*` comments, so it reports them; they want
+  a `custom-biome-ignore` marker if that local decision still stands.
+- 1 in `src/lib/datadog/dogapi/api/metric.js` (`metrics[i].points = ...`) and
+  2 others are depth-2 writes in code ESLint was not covering.
+
+Two notes for anyone re-running this:
+
+- The scoping estimates in
+  `DESTRUCTURED_PARAM_MUTATION_RULES_PLAN.md` (~13 / ~69 / ~32) were derived by
+  counting existing `eslint-disable` comments and bucketing them by cause. The
+  rules report every occurrence, not only previously-suppressed ones, and a
+  single line can belong to more than one bucket — which is why
+  `deep-param-prop-assign` lands at 137 rather than ~32. The 98%
+  already-suppressed rate for that rule is what rules out over-firing as the
+  explanation.
+- `bare-arrow-param-prop-assign`'s count is a direct function of the dashboard's
+  `arrowParentheses: "asNeeded"` formatting. A repo that parenthesizes arrow
+  parameters has no use for that rule at all, which is why it ships off.
+
 ## Fixtures
 
 Each rule has four fixture files under `fixtures/<rule_name>/`:
@@ -405,10 +794,27 @@ Each rule has four fixture files under `fixtures/<rule_name>/`:
 | `suppressed.js` | The same violations, silenced by ignore comments |
 | `edge-cases.js` | Documented boundary behavior — gaps in coverage and known quirks, each pinned to an exact violation count |
 
-Running the tool over all fixtures yields 11 errors in 6 files — 7 from the
-three `invalid.js` files (2 from `no-arrow-function-create-selector`, 2 from
-`no-native-map`, 3 from `reselect-arity-match`), plus 4 more from the three
-`edge-cases.js` files (2 from `no-native-map`, 1 from
-`no-arrow-function-create-selector`, 1 from `reselect-arity-match`) — each a
-deliberate, documented behavior rather than a bug. `valid.js` and
-`suppressed.js` contribute nothing. See [TESTING.md](TESTING.md).
+Running the tool over all fixtures yields **52 errors in 10 files** out of 28
+fixture files, each a deliberate, documented behavior rather than a bug:
+
+| Rule | `invalid.js` | `edge-cases.js` |
+| --- | --- | --- |
+| `no-native-map` | 2 | 2 |
+| `no-arrow-function-create-selector` | 2 | 1 |
+| `reselect-arity-match` | 3 | 1 |
+| `destructure-default-param-assign` | 5 | 17 |
+| `destructure-param-prop-assign` | 5 | 14 |
+
+`valid.js` and `suppressed.js` contribute nothing. The two opt-in rules
+contribute nothing either — they are off in this repo's own `package.json`, so
+their fixtures are exercised by `cargo test` (which runs a named rule directly)
+rather than by a CLI run over `fixtures/`.
+
+Four `valid.js` files carry a `custom-biome-ignore` marker naming the *other*
+rule of a pair: a near-miss for one rule is often a genuine finding for its
+sibling (a destructured parameter is the wrong shape for
+`bare-arrow-param-prop-assign` and exactly the right shape for
+`destructure-param-prop-assign`). Keeping the marker there is what preserves the
+property that no `valid.js` reports anything in a whole-directory run.
+
+See [TESTING.md](TESTING.md).

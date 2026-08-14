@@ -26,9 +26,10 @@ same shape Biome, esbuild, and swc use.
 Releases are cut from a `v<major>.<minor>.<patch>` git tag. Pushing the tag
 triggers `.github/workflows/publish.yml`, which builds all 6 targets and
 publishes all 7 packages (see [DISTRIBUTION.md](DISTRIBUTION.md#release-pipeline)
-for the job breakdown). The steps below are what that workflow does — useful
+for the job breakdown). Steps 1-3 below are what that workflow does — useful
 both to understand what CI is doing and to reproduce a publish by hand if
-CI is ever unavailable.
+CI is ever unavailable. Step 4 is the one part CI does not do, because it is
+only possible after the packages are on the registry.
 
 ### 1. Bump the version
 
@@ -103,6 +104,58 @@ npx custom-biome-lint src            # expect: no-native-map violation, exit 1
 Exit code 1 with one reported violation is success — and confirms Rust was
 never required on this machine. Also confirm the registry page renders:
 `https://www.npmjs.com/package/custom-biome-lint`.
+
+### 4. Refresh `package-lock.json` (post-publish, required for `npm ci`)
+
+`scripts/set-version.js` keeps the lockfile's *version numbers* in step with
+`package.json`, but it cannot add the resolved dependency entries for the six
+platform packages: at bump time those versions do not exist on the registry
+yet — this release is what publishes them. Until they are resolved, the
+lockfile lists the six `optionalDependencies` without any matching entry, and
+`npm ci` refuses the tree:
+
+```
+npm error `npm ci` can only install packages when your package.json and
+npm error package-lock.json ... are in sync.
+npm error Missing: custom-biome-lint-darwin-arm64@ from lock file
+```
+
+So regenerate it once the packages are actually on the registry — after step 2
+has published and step 3 has verified them, never before:
+
+```sh
+git switch main && git pull
+npm install --package-lock-only    # now resolvable: every platform package exists
+git add package-lock.json
+git commit -m "chore: refresh package-lock.json for v0.3.0"
+git push
+```
+
+`--package-lock-only` writes the lockfile without installing anything, so this
+does not depend on the current machine's platform. Run it on a clean `main`
+checkout so the commit contains nothing but the lockfile.
+
+Verify before committing — the six entries should now be present and at the
+released version:
+
+```sh
+node -e 'const l=require("./package-lock.json");
+  const root=l.packages[""];
+  console.log("root:", root.version);
+  for (const [n,v] of Object.entries(root.optionalDependencies))
+    console.log(n, v, n in l.packages ? "resolved" : "MISSING");'
+```
+
+If any still says `MISSING`, that platform package did not publish — go back to
+step 2 rather than committing a lockfile that codifies the gap.
+
+**Why this is a separate step and not part of the release commit:** it is the
+one piece of version bookkeeping that is only *possible* after publishing, so
+folding it into step 1 would either fail (unresolvable versions) or silently
+record the previous release's entries. Skipping it is not fatal — the package
+installs fine via `npm install`, which is how consumers get it — but it leaves
+`npm ci` broken for anyone who vendors this repo, and it is why the lockfile
+drifted from `0.2.0` to `0.2.1` unnoticed before v0.3.0.
 
 ## First-time bootstrap: a brand-new package name
 
@@ -243,8 +296,12 @@ Rust toolchain and no build step. See
 
 - **Never reintroduce a `postinstall` compile step.** Normal installation
   must not run `cargo build` under any circumstance.
-- **Version numbers live in 14 fields across 8 files** and
+- **Version numbers live in 22 fields across 9 files** and
   `scripts/set-version.js` is the only supported way to change them.
+- **`package-lock.json` needs a post-publish refresh** (step 4) for `npm ci`
+  to work. The resolved platform-package entries cannot exist before the
+  release that publishes them, so this is the one version-bookkeeping step
+  the release workflow cannot do.
 - **Each of the 7 packages needs its own npm trusted publisher** configured
   before the release workflow can publish it.
 - **Published versions are immutable.** `npm unpublish` frees the name, not

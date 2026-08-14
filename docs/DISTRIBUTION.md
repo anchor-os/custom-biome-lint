@@ -225,7 +225,8 @@ executing successfully isn't on its own proof it's actually ARM64.
 `scripts/set-version.js <version>` is the single place version numbers get
 written for a release. It updates, in order: `Cargo.toml`'s `[package]`
 version, the root `package.json` version and all six
-`optionalDependencies` entries, and each `npm/<platform>/package.json`
+`optionalDependencies` entries, `package-lock.json`'s two version fields and
+its own copy of `optionalDependencies`, and each `npm/<platform>/package.json`
 version. Run it locally to preview a version bump:
 
 ```sh
@@ -239,6 +240,13 @@ npm version is exactly the drift this script exists to prevent. It's also
 why the release workflow runs this script *before* building each platform's
 binary, not only afterward when staging the npm packages — see
 [Release pipeline](#release-pipeline) above.
+
+One thing it deliberately does **not** do: add `package-lock.json`'s resolved
+entries for the six platform packages. At bump time those versions are not on
+the registry yet, so nothing can resolve them; the lockfile is refreshed as a
+separate post-publish step instead. See
+[PUBLISH_TO_NPM.md step 4](PUBLISH_TO_NPM.md#4-refresh-package-lockjson-post-publish-required-for-npm-ci)
+for why `npm ci` depends on it and how to do it.
 
 ## Security
 
