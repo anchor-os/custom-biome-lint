@@ -1,6 +1,6 @@
 {
   "name": "custom-biome-lint-darwin-x64",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Precompiled custom-biome-lint binary for macOS x64",
   "os": [
     "darwin"

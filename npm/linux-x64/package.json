@@ -1,6 +1,6 @@
 {
   "name": "custom-biome-lint-linux-x64",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Precompiled custom-biome-lint binary for Linux x64",
   "os": [
     "linux"
