@@ -167,13 +167,28 @@ jobs:
       # One mechanism for both legs also means one place to fix if it breaks.
       # Pinned to a release binary rather than `cargo install cross` so a
       # release build does not depend on compiling a build tool from source.
+      # Pinned by version *and* content digest, then verified before anything is
+      # extracted. Piping a download straight into `sudo tar` would let a
+      # compromised or swapped release artifact write executables into
+      # /usr/local/bin on the runner that builds the binaries this project
+      # ships — the same reason every action above is pinned by commit SHA
+      # rather than by tag. Digest recorded 2026-08-14 for
+      # cross-rs/cross v0.2.5 cross-x86_64-unknown-linux-gnu.tar.gz; it must be
+      # updated deliberately whenever CROSS_VERSION changes, and a mismatch
+      # fails the release rather than warning.
       - name: Install cross (musl legs)
         if: matrix.use_cross
+        env:
+          CROSS_VERSION: v0.2.5
+          CROSS_SHA256: 642375d1bcf3bd88272c32ba90e999f3d983050adf45e66bd2d3887e8e838bad
         run: |
           set -euo pipefail
+          archive="$(mktemp -d)/cross.tar.gz"
           curl --fail --silent --show-error --location \
-            https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-gnu.tar.gz \
-            | sudo tar -xz -C /usr/local/bin cross cross-util
+            "https://github.com/cross-rs/cross/releases/download/${CROSS_VERSION}/cross-x86_64-unknown-linux-gnu.tar.gz" \
+            -o "$archive"
+          echo "${CROSS_SHA256}  ${archive}" | sha256sum --check --strict -
+          sudo tar -xz -C /usr/local/bin -f "$archive" cross cross-util
           cross --version
 
       - name: Build (release)

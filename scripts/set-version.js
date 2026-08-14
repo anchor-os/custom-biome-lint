@@ -94,13 +94,16 @@ function preflight(version) {
     }
     lock.version = version;
     rootEntry.version = version;
-    if (rootEntry.optionalDependencies) {
-      // Assigned unconditionally, not only for keys already present: a newly
-      // added platform must appear in the lockfile too, or `npm ci` rejects
-      // the tree as out of sync with package.json.
-      for (const platform of PLATFORMS) {
-        rootEntry.optionalDependencies[`custom-biome-lint-${platform}`] = version;
-      }
+    // Created when absent rather than skipped: guarding on the key existing
+    // would silently write no platform entries at all for a lockfile that
+    // happens to lack the block, which is the exact drift this is here to
+    // prevent. package.json is already validated to carry all of them above.
+    rootEntry.optionalDependencies = rootEntry.optionalDependencies || {};
+    // Assigned unconditionally, not only for keys already present: a newly
+    // added platform must appear in the lockfile too, or `npm ci` rejects
+    // the tree as out of sync with package.json.
+    for (const platform of PLATFORMS) {
+      rootEntry.optionalDependencies[`custom-biome-lint-${platform}`] = version;
     }
     writes.push({ filePath: lockPath, contents: `${JSON.stringify(lock, null, 2)}\n` });
   }

@@ -137,18 +137,29 @@ does not depend on the current machine's platform. Run it on a clean `main`
 checkout so the commit contains nothing but the lockfile.
 
 Verify before committing — all eight entries should now be present and at the
-released version:
+released version. This exits non-zero on any problem, so it can gate a script
+rather than relying on reading the output:
 
 ```sh
-node -e 'const l=require("./package-lock.json");
-  const root=l.packages[""];
+node -e 'const l = require("./package-lock.json");
+  const root = l.packages[""];
   console.log("root:", root.version);
-  for (const [n,v] of Object.entries(root.optionalDependencies))
-    console.log(n, v, n in l.packages ? "resolved" : "MISSING");'
+  let bad = 0;
+  for (const [name, want] of Object.entries(root.optionalDependencies)) {
+    // Lockfile v2/v3 key packages by install path, not by bare name.
+    const entry = l.packages[`node_modules/${name}`];
+    const state = !entry ? "MISSING" : entry.version !== want ? `MISMATCH (${entry.version})` : "ok";
+    if (state !== "ok") bad++;
+    console.log(" ", name, want, state);
+  }
+  if (bad) { console.error(`${bad} entr${bad === 1 ? "y" : "ies"} not resolved at the released version`); process.exit(1); }
+  console.log("all", Object.keys(root.optionalDependencies).length, "platform entries resolved");'
 ```
 
-If any still says `MISSING`, that platform package did not publish — go back to
-step 2 rather than committing a lockfile that codifies the gap.
+`MISSING` means that platform package is not on the registry — go back to step 2
+rather than committing a lockfile that codifies the gap. `MISMATCH` means the
+lockfile resolved an older version than the one being released, which usually
+means `npm install --package-lock-only` ran before the publish completed.
 
 **Why this is a separate step and not part of the release commit:** it is the
 one piece of version bookkeeping that is only *possible* after publishing, so
@@ -190,24 +201,33 @@ publishers already exist.
 **The one-time fix**, run once per new package name, never needed again once its trusted publisher
 is configured:
 
+Only ever run it for names that have **never** been published. Republishing a
+version that already exists is an error, not a no-op — so the commands below
+name the two musl packages specifically rather than looping over all nine.
+
 ```sh
-# 1. Get real, CI-built binaries for every platform from the build job that already succeeded
-#    (no need to build them all locally):
+# 1. Get real, CI-built binaries from the build job that already succeeded
+#    (no need to build them locally):
 gh run download <build-run-id> --repo anchor-os/custom-biome-lint --dir /tmp/bootstrap-artifacts
 
-# 2. Stage each into its platform package (unix ones need chmod +x; .exe ones don't):
-mkdir -p npm/darwin-arm64/bin
-cp /tmp/bootstrap-artifacts/binary-darwin-arm64/custom-biome-lint npm/darwin-arm64/bin/
-chmod +x npm/darwin-arm64/bin/custom-biome-lint
-# ...repeat for the other platforms
+# 2. Stage each into its platform package (both are unix, so both need chmod +x):
+for platform in linux-x64-musl linux-arm64-musl; do
+  mkdir -p "npm/$platform/bin"
+  cp "/tmp/bootstrap-artifacts/binary-$platform/custom-biome-lint" "npm/$platform/bin/"
+  chmod +x "npm/$platform/bin/custom-biome-lint"
+done
 
-# 3. Publish each with your own npm login (npm will likely prompt for browser-based
+# 3. Publish with your own npm login (npm will likely prompt for browser-based
 #    one-time-password auth — that's expected and can only be completed by a human,
 #    not from an unattended/automated shell):
-(cd npm/darwin-arm64 && npm publish --access public)
-# ...repeat for the other platforms, then the main package:
-npm publish --access public
+(cd npm/linux-x64-musl && npm publish --access public)
+(cd npm/linux-arm64-musl && npm publish --access public)
 ```
+
+Do **not** publish the main package here, and do not touch the seven packages
+that already exist: the normal release sequence handles those, and the main
+package must publish last so its `optionalDependencies` pin versions that are
+already on the registry. For a future new package name, substitute it above.
 
 No `--provenance` flag here — that requires OIDC/CI attestation, which a local human-run publish
 doesn't have. Provenance starts applying from the next CI-driven release onward.
