@@ -147,6 +147,27 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           package-manager-cache: false
 
+      # actions/setup-node registers ESLint problem matchers (owners
+      # `eslint-compact`, `eslint-stylish`, `tsc`), and this tool deliberately
+      # prints ESLint-stylish output — a path line, then `line:col error message
+      # rule`. The result is that the fixtures smoke test below, whose 52
+      # violations are the *expected* contract, gets every one of them promoted
+      # to a GitHub error annotation: a green release run reports "50 errors".
+      #
+      # That is not just cosmetic. GitHub caps annotations per job, so fixture
+      # noise can crowd out the rustc/clippy annotations that would actually
+      # explain a failed release. Nothing in this workflow runs ESLint or tsc,
+      # so the matchers have nothing legitimate to match here.
+      #
+      # ci.yml needs no equivalent: its fixtures job does not use setup-node, so
+      # no matcher is ever registered alongside the linter's output there.
+      - name: Drop ESLint problem matchers
+        shell: bash
+        run: |
+          echo "::remove-matcher owner=eslint-compact::"
+          echo "::remove-matcher owner=eslint-stylish::"
+          echo "::remove-matcher owner=tsc::"
+
       - name: Set release version before building
         shell: bash
         run: node scripts/set-version.js "${{ needs.determine-version.outputs.version }}"
