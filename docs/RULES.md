@@ -1,6 +1,6 @@
 # Rules
 
-Seven rules in two groups.
+Eight rules in two groups.
 
 **The original three** are behaviour-for-behaviour ports of custom ESLint rules
 from `eslint-rules/`. The ports are deliberately faithful rather than
@@ -18,7 +18,7 @@ actually conflicted — see each rule's own section, and
 the reasoning. A file that never shadows these names or imports them from an
 unrelated module — the overwhelming common case — sees no change at all.
 
-**The four parameter-mutation rules** are not ports. They close specific,
+**The five parameter-mutation rules** are not ports. They close specific,
 measured gaps between ESLint's `no-param-reassign` (removed) and Biome's
 `lint/style/noParameterAssign` (enabled here with
 `propertyAssignment: "deny"`), which turns out to reach only *plain identifier
@@ -39,8 +39,10 @@ function depthTwo(acc, x, y)   { acc[x][y] = 1; }  // MISSED -> rule 4
 ```
 
 Rules 1 and 2 are always on, like the original three. Rules 3 and 4 ship
-**off by default** and must be opted into per repo — see
-[Opting into the two default-off rules](#opting-into-the-two-default-off-rules).
+**off by default** and must be opted into per repo, as does
+`param-mutating-array-method-call` (rule 5, a `CallExpression` companion to
+rules 1–4 that closes the gap ESLint's `no-param-reassign` used to cover) — see
+[Opting into the three default-off rules](#opting-into-the-three-default-off-rules).
 
 | Rule | Guards against | Extensions | `--auto-fix` |
 | --- | --- | --- | --- |
@@ -51,6 +53,7 @@ Rules 1 and 2 are always on, like the original three. Rules 3 and 4 ship
 | [`destructure-param-prop-assign`](#destructure-param-prop-assign) | Mutating a destructured parameter's properties, at any depth | `.js`, `.jsx` | No — the right copy shape (spread, deep clone, Immutable update) can't be inferred from the mutation site |
 | [`bare-arrow-param-prop-assign`](#bare-arrow-param-prop-assign) **(off by default)** | Property mutation Biome misses on an arrow's unparenthesized single parameter | `.js`, `.jsx` | No — adding parens would just hand the same mutation to Biome to re-report |
 | [`deep-param-prop-assign`](#deep-param-prop-assign) **(off by default)** | Plain-parameter mutation 2+ levels deep, past where Biome stops looking | `.js`, `.jsx` | No — same "would have to guess the copy shape" as above |
+| [`param-mutating-array-method-call`](#param-mutating-array-method-call) **(off by default)** | Mutating array-method calls (`push`, `sort`, `splice`, …) on a parameter — the `CallExpression` gap `no-param-reassign` covered, Biome doesn't | `.js`, `.jsx` | No — the right copy shape can't be inferred from the call site |
 
 ---
 
@@ -519,7 +522,7 @@ re-reported later as missed cases:
 ## `bare-arrow-param-prop-assign`
 
 **Off by default.** See
-[Opting into the two default-off rules](#opting-into-the-two-default-off-rules).
+[Opting into the three default-off rules](#opting-into-the-three-default-off-rules).
 
 **Message:** `Mutating a property of parameter "<name>" is invisible to Biome's
 noParameterAssign because this arrow's single parameter has no parens. Add
@@ -585,7 +588,7 @@ the parameter correctly resolves to the local.
 ## `deep-param-prop-assign`
 
 **Off by default.** See
-[Opting into the two default-off rules](#opting-into-the-two-default-off-rules).
+[Opting into the three default-off rules](#opting-into-the-three-default-off-rules).
 
 **Message:** `Mutating parameter "<name>" 2+ levels deep ("<chain>") is
 invisible to Biome's noParameterAssign, which only tracks one level. Copy the
@@ -666,12 +669,120 @@ On the dashboard, 21 lines trip both rules; the rest trip exactly one.
 
 ---
 
-## Opting into the two default-off rules
+## `param-mutating-array-method-call`
 
-`bare-arrow-param-prop-assign` and `deep-param-prop-assign` are the only rules
-whose `default_severity()` is `off`. With no configuration they never run — the
-same posture as Biome's own `noParameterAssign.propertyAssignment: "allow"`
-default. Turn them on by giving them a severity in `package.json`:
+**Off by default.** See
+[Opting into the three default-off rules](#opting-into-the-three-default-off-rules).
+
+**Message:** `Mutating array method called on a parameter — this modifies data
+the caller still holds a reference to. Copy the parameter first.` Findings in a
+file that imports `immutable` (or a `/immutable`-suffixed subpath such as
+`redux-form/immutable`) carry a `(low confidence: file imports 'immutable')`
+suffix; a finding on a receiver named `fields`/`field` carries a `(low
+confidence: receiver named 'fields' may be a redux-form helper)` suffix.
+
+**Source:** `src/rules/param_mutating_array_method_call.rs`
+
+### What it catches
+
+Mutating array-method calls (`push`, `pop`, `shift`, `unshift`, `splice`,
+`sort`, `reverse`, `fill`, `copyWithin`) whose receiver is rooted in a function
+parameter — at any chain depth, in either a plain or destructured parameter
+declaration. It is the `CallExpression` counterpart to the four assignment-shaped
+parameter-mutation rules: all of those key off assignment/update expressions and
+none inspect a call, so `param.push(item)` — a genuine parameter mutation — was
+invisible to them and to Biome's `noParameterAssign` (which only sees
+assignments), exactly the gap ESLint's `no-param-reassign` used to close.
+
+```js
+// Plain or destructured, direct or chain-rooted — all fire on `param.x(...)`
+export const buildProductsData = ({ productsData }, product) => {
+  productsData.push(product); // the instance that motivated the rule
+};
+
+function collect(accum, item) { accum.push(item); }            // plain, direct
+function addToGroup(accum, key, item) { accum[key].items.push(item); } // chained
+function sortInPlace(list) { list.sort(); }                    // in-place sort
+```
+
+The detection is **name-based**: a fixed mutating-method list, on a receiver
+whose chain root resolves via the semantic model to a `Parameter` binding. There
+is deliberately no type inference — this tool resolves identifiers to *bindings*,
+not *types* — which is the central design tradeoff of the rule (see below).
+
+### Before / after
+
+```js
+// ✗ Flagged — mutates the caller's array in place
+export const buildProductsData = ({ productsData }, product) => {
+  productsData.push(product);
+};
+```
+
+```js
+// ✓ Clean — copy first, then mutate the copy
+export const buildProductsData = ({ productsData }, product) => {
+  const result = [...productsData, product];
+  return result;
+};
+```
+
+### The precision tradeoff (read this before enabling)
+
+Unlike the four assignment rules, whose property-assignment targets are
+*unambiguously* mutations, `x.push(...)` only mutates `x` when `x` is a native
+`Array` at runtime — which this tool cannot determine from syntax alone. Two
+pervasive same-named, **non-mutating** idioms in codebases like the dashboard
+reuse these exact method names:
+
+- **Immutable.js** (`Immutable.List#push`, `Immutable.Map#set`, …) returns a new
+  collection and does not mutate the receiver.
+- **Redux-Form's `FieldArray` `fields` helper** (`fields.push()`, `fields.remove()`)
+  dispatches actions rather than mutating a plain array.
+
+In scoping against the dashboard corpus, roughly half of the raw mutating-method
+calls on parameters turned out to be one of these two idioms. The rule therefore
+ships **off by default** and, when enabled, attaches a **low-confidence suffix**
+to findings that look like either idiom (an `immutable` import, or a
+`fields`/`field` receiver name). The suffix is a *marker for triage priority*,
+**not** a suppression — the finding still reports, because a name/import
+heuristic is not safe enough to auto-hide a real `productsData.push(product)`-
+shaped bug behind a coincidental variable name.
+
+### Known non-goals
+
+- **Map/Set-shaped method names (`set`, `delete`, `clear`, `add`) are entirely
+  out of scope for v1.** Every sampled `set`/`delete`/`add` call on the
+  dashboard turned out to be Immutable.js; a name-based rule over them would
+  round to near-zero true positives, so no companion rule is proposed.
+- **Bracket/computed calls** (`list['push'](item)`) — rare enough in practice to
+  not model in v1.
+- **Aliasing** (`const local = list; local.push(item)`) — same non-goal the
+  assignment rules carry; needs real dataflow analysis.
+- **Distinguishing Immutable.js / redux-form receivers from plain arrays by
+  type** — the core limitation above, addressed by scope-narrowing (array methods
+  only) and workflow (mandatory manual triage before suppression), not by
+  pretending the tool can tell the difference syntactically.
+
+### Rollout recommendation
+
+Do **not** adopt this rule the way the assignment rules were (enable, `--write-fix`,
+blanket-suppress the old `eslint-disable`s). Generate a findings-review doc first
+and triage every finding — especially the low-confidence ones — by hand before
+adding any `custom-biome-ignore` comment. Auto-suppressing an Immutable.js
+`.push()` false positive reads as "yes, this is a real parameter mutation,
+intentionally allowed," which is actively misleading. `--write-fix` still works
+mechanically; the recommendation is a workflow caution, not a capability gap.
+
+---
+
+## Opting into the three default-off rules
+
+`bare-arrow-param-prop-assign`, `deep-param-prop-assign`, and
+`param-mutating-array-method-call` are the only rules whose `default_severity()`
+is `off`. With no configuration they never run — the same posture as Biome's own
+`noParameterAssign.propertyAssignment: "allow"` default. Turn them on by giving
+them a severity in `package.json`:
 
 ```json
 {
@@ -689,7 +800,7 @@ This reuses the existing severity mechanism rather than adding a second,
 Biome-shaped config namespace; see
 [ADDING_A_RULE.md](ADDING_A_RULE.md#default-severity-shipping-a-rule-off-by-default)
 for how `default_severity()` works and when a new rule should use it. Unlike the
-other five rules, these two appear in the `-v` "rules ignored" listing when
+other five rules, these three appear in the `-v` "rules ignored" listing when
 unconfigured, because that is what unconfigured means for them.
 
 ---
@@ -738,10 +849,17 @@ the 8 findings one-for-one. The only other file mentioning the rule name is
 `scripts/rebuildEslintDisables.js`, which references it as a string in tooling
 rather than suppressing anything. Treat 8 as the real number.
 
-### The four parameter-mutation rules
+### The four assignment-shaped parameter-mutation rules
 
 Run against the dashboard's `src/` and `cypress/` trees (4,416 files) with both
 opt-in rules enabled, at dashboard commit `be48c6d81`:
+
+`param-mutating-array-method-call` (the call-shaped fifth rule) is deliberately
+absent from this tally: its dashboard corpus scoping lives in
+`docs/PARAM_MUTATING_METHOD_CALL_RULE_PLAN.md`, and — unlike the four rules
+above — it was scoped *before* being built rather than verified against a prior
+`eslint-disable` baseline, because the dashboard's removed `no-param-reassign`
+never reached `CallExpression`s at all.
 
 | Rule | Findings | Files |
 | --- | --- | --- |

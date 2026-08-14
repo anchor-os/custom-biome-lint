@@ -6,6 +6,7 @@ use super::destructure_default_param_assign::DestructureDefaultParamAssign;
 use super::destructure_param_prop_assign::DestructureParamPropAssign;
 use super::no_arrow_function_create_selector::NoArrowFunctionCreateSelector;
 use super::no_native_map::NoNativeMap;
+use super::param_mutating_array_method_call::ParamMutatingArrayMethodCall;
 use super::reselect_arity_match::ReselectArityMatch;
 use super::rule::Rule;
 
@@ -30,6 +31,7 @@ impl RuleRegistry {
                 Box::new(DestructureParamPropAssign),
                 Box::new(BareArrowParamPropAssign),
                 Box::new(DeepParamPropAssign),
+                Box::new(ParamMutatingArrayMethodCall),
             ],
         }
     }
