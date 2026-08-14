@@ -9,10 +9,13 @@ on:
 # id-token: write is required for npm trusted publishing (OIDC), used by both
 # the platform-package publishes and the main-package publish below. The
 # publish happens without any NPM_TOKEN secret; npm exchanges the runner's
-# short-lived OIDC token for a publish-scoped credential. Each of the 7
-# packages (6 platform + main) needs its own npm trusted publisher entry
+# short-lived OIDC token for a publish-scoped credential. Each of the 9
+# packages (8 platform + main) needs its own npm trusted publisher entry
 # configured on npmjs.com pointing at this workflow + the npm-publish
-# environment.
+# environment. A package whose trusted publisher is missing fails the publish
+# job outright — the two musl packages are brand new and need theirs
+# bootstrapped before the first release that includes them (see
+# docs/PUBLISH_TO_NPM.md#first-time-bootstrap-a-brand-new-package-name).
 #
 # deployments: write is required to start a job that targets an environment
 # with protection rules (required reviewers) — the runner must create the
@@ -65,9 +68,10 @@ jobs:
   # from windows-latest (x64): cross-compiling to aarch64-pc-windows-msvc
   # needs the ARM64 MSVC linker/libraries and the right INCLUDE/LIB/PATH
   # environment active, which `rustup target add` alone does not set up, and
-  # a native runner sidesteps that failure mode entirely. Only linux-arm64
-  # remains cross-compiled (ubuntu-22.04 x64 host, via `gcc-aarch64-linux-gnu`)
-  # and is limited to an architecture check on the produced artifact.
+  # a native runner sidesteps that failure mode entirely. linux-arm64 remains
+  # cross-compiled (ubuntu-22.04 x64 host, via `gcc-aarch64-linux-gnu`) and is
+  # limited to an architecture check on the produced artifact, as are the two
+  # musl legs (see the "Install cross" step for why they use `cross`).
   build:
     needs: determine-version
     strategy:
@@ -95,6 +99,24 @@ jobs:
             node_os: linux
             can_run: false
             cross_linux_arm64: true
+          # musl legs: statically linked binaries for Alpine and other
+          # musl-based images. Both are built inside a `cross` container, so
+          # neither is treated as natively runnable on this glibc x64 runner —
+          # see the "Install cross" step.
+          - platform: linux-x64-musl
+            target: x86_64-unknown-linux-musl
+            os: ubuntu-22.04
+            node_os: linux
+            can_run: false
+            use_cross: true
+            elf_arch: x86-64
+          - platform: linux-arm64-musl
+            target: aarch64-unknown-linux-musl
+            os: ubuntu-22.04 # x64 host; cross-compiled inside a cross container
+            node_os: linux
+            can_run: false
+            use_cross: true
+            elf_arch: ARM aarch64
           - platform: win32-x64
             target: x86_64-pc-windows-msvc
             os: windows-latest
@@ -135,12 +157,52 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
+      # `cross` (Docker images carrying real musl cross toolchains) rather than
+      # `rustup target add` plus apt linkers, for both musl legs:
+      # x86_64-unknown-linux-musl would mostly work with `musl-tools` alone,
+      # but aarch64-unknown-linux-musl has no Ubuntu cross-gcc package — the
+      # available `gcc-aarch64-linux-gnu` targets glibc, and pointing the musl
+      # target's linker at it is exactly the class of half-configured
+      # cross-linking that already cost this workflow a Windows ARM64 rewrite.
+      # One mechanism for both legs also means one place to fix if it breaks.
+      # Pinned to a release binary rather than `cargo install cross` so a
+      # release build does not depend on compiling a build tool from source.
+      # Pinned by version *and* content digest, then verified before anything is
+      # extracted. Piping a download straight into `sudo tar` would let a
+      # compromised or swapped release artifact write executables into
+      # /usr/local/bin on the runner that builds the binaries this project
+      # ships — the same reason every action above is pinned by commit SHA
+      # rather than by tag. Digest recorded 2026-08-14 for
+      # cross-rs/cross v0.2.5 cross-x86_64-unknown-linux-gnu.tar.gz; it must be
+      # updated deliberately whenever CROSS_VERSION changes, and a mismatch
+      # fails the release rather than warning.
+      - name: Install cross (musl legs)
+        if: matrix.use_cross
+        env:
+          CROSS_VERSION: v0.2.5
+          CROSS_SHA256: 642375d1bcf3bd88272c32ba90e999f3d983050adf45e66bd2d3887e8e838bad
+        run: |
+          set -euo pipefail
+          archive="$(mktemp -d)/cross.tar.gz"
+          curl --fail --silent --show-error --location \
+            "https://github.com/cross-rs/cross/releases/download/${CROSS_VERSION}/cross-x86_64-unknown-linux-gnu.tar.gz" \
+            -o "$archive"
+          echo "${CROSS_SHA256}  ${archive}" | sha256sum --check --strict -
+          sudo tar -xz -C /usr/local/bin -f "$archive" cross cross-util
+          cross --version
+
       - name: Build (release)
         shell: bash
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
-        run: cargo build --release --target ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
 
       - name: Test (native targets only)
         if: matrix.can_run
@@ -199,6 +261,28 @@ jobs:
           file target/aarch64-unknown-linux-gnu/release/custom-biome-lint
           file target/aarch64-unknown-linux-gnu/release/custom-biome-lint | grep -q "ARM aarch64"
 
+      # The musl legs cannot be executed here (they are built in a cross
+      # container and, for arm64, for another architecture entirely), so this
+      # is the only check they get. Static linking is the whole point of these
+      # two packages: a musl binary that came out dynamically linked would fail
+      # on Alpine in exactly the way the glibc binary already does, which is
+      # the bug these packages exist to fix.
+      - name: Verify the musl binary is statically linked and correctly targeted
+        if: matrix.use_cross
+        run: |
+          set -euo pipefail
+          bin="target/${{ matrix.target }}/release/custom-biome-lint"
+          file "$bin"
+          file "$bin" | grep -q "${{ matrix.elf_arch }}"
+          if ! file "$bin" | grep -Eq "static-pie linked|statically linked"; then
+            echo "expected a statically linked musl binary"
+            exit 1
+          fi
+          if ldd "$bin" 2>&1 | grep -q "libc.so.6"; then
+            echo "musl binary still links against glibc's libc.so.6"
+            exit 1
+          fi
+
       # Kept even though win32-arm64 now builds natively (not cross-compiled):
       # Windows 11 on ARM64 transparently emulates x64 binaries, so a binary
       # that runs successfully is not on its own proof that it's actually
@@ -236,7 +320,7 @@ jobs:
 
   # Assembles the platform npm packages from the artifacts built above, syncs
   # every package.json + Cargo.toml to the release version determined above,
-  # copies each binary into its `npm/<platform>/bin/`, then publishes the six
+  # copies each binary into its `npm/<platform>/bin/`, then publishes the eight
   # platform packages followed by the main package. The main package must
   # publish last, since its optionalDependencies pin the exact versions the
   # platform packages just published under.
@@ -294,7 +378,7 @@ jobs:
           node -e '
             const fs = require("fs");
             const version = process.argv[1];
-            const platforms = ["darwin-arm64","darwin-x64","linux-arm64","linux-x64","win32-arm64","win32-x64"];
+            const platforms = ["darwin-arm64","darwin-x64","linux-arm64","linux-arm64-musl","linux-x64","linux-x64-musl","win32-arm64","win32-x64"];
             const mismatches = [];
 
             const cargoVersion = fs.readFileSync("Cargo.toml", "utf8").match(/^version = "([^"]*)"/m)?.[1];
@@ -323,9 +407,10 @@ jobs:
         run: |
           set -euo pipefail
           declare -A unix_platforms=(
-            [darwin-arm64]=1 [darwin-x64]=1 [linux-arm64]=1 [linux-x64]=1
+            [darwin-arm64]=1 [darwin-x64]=1 [linux-arm64]=1 [linux-arm64-musl]=1
+            [linux-x64]=1 [linux-x64-musl]=1
           )
-          for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
+          for platform in darwin-arm64 darwin-x64 linux-arm64 linux-arm64-musl linux-x64 linux-x64-musl win32-arm64 win32-x64; do
             mkdir -p "npm/$platform/bin"
             if [[ -n "${unix_platforms[$platform]:-}" ]]; then
               cp "artifacts/binary-$platform/custom-biome-lint" "npm/$platform/bin/custom-biome-lint"
@@ -337,8 +422,9 @@ jobs:
 
       # Final gate before anything is published: prove a staged binary
       # actually reports the release version, not just that its manifest
-      # says so. linux-x64 is the one artifact this ubuntu-latest job can
-      # execute directly.
+      # says so. linux-x64 is the artifact this glibc ubuntu-latest job runs
+      # directly; the musl artifacts are deliberately not executed here (see
+      # docs/DISTRIBUTION.md#limitations).
       - name: Verify a staged binary reports the release version
         run: |
           set -euo pipefail
@@ -350,7 +436,7 @@ jobs:
             exit 1
           fi
 
-      # Restart-safe: a rerun after a partial failure (e.g. 3 of 6 platform
+      # Restart-safe: a rerun after a partial failure (e.g. 3 of 8 platform
       # packages published, then a transient registry error) must not fail on
       # the versions that already went out — published versions are
       # immutable, so re-publishing the same version is not just unnecessary,
@@ -360,7 +446,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ needs.determine-version.outputs.version }}"
-          for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
+          for platform in darwin-arm64 darwin-x64 linux-arm64 linux-arm64-musl linux-x64 linux-x64-musl win32-arm64 win32-x64; do
             pkg="custom-biome-lint-$platform"
             if npm view "$pkg@$version" version >/dev/null 2>&1; then
               echo "::notice::$pkg@$version already on the registry, skipping (restart after partial failure)"
@@ -374,7 +460,7 @@ jobs:
       # Belt-and-suspenders check, independent of how the loop above got each
       # package there (published just now, or already present from an earlier
       # attempt of this same release): the main package's optionalDependencies
-      # pin all six exact versions, so publishing it before every platform
+      # pin all eight exact versions, so publishing it before every platform
       # package actually exists at that version would ship a main package
       # whose install can never succeed on the missing platform(s).
       #
@@ -390,7 +476,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ needs.determine-version.outputs.version }}"
-          for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
+          for platform in darwin-arm64 darwin-x64 linux-arm64 linux-arm64-musl linux-x64 linux-x64-musl win32-arm64 win32-x64; do
             pkg="custom-biome-lint-$platform"
             attempt=1
             max_attempts=15

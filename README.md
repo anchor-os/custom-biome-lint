@@ -48,18 +48,26 @@ platform via npm's `optionalDependencies` — the same distribution model
 
 ### Supported platforms
 
-| OS | Architecture |
-| --- | --- |
-| macOS | ARM64 |
-| macOS | x64 |
-| Linux | ARM64 |
-| Linux | x64 |
-| Windows | ARM64 |
-| Windows | x64 |
+| OS | Architecture | libc |
+| --- | --- | --- |
+| macOS | ARM64 | — |
+| macOS | x64 | — |
+| Linux | ARM64 | glibc |
+| Linux | ARM64 | musl (Alpine) |
+| Linux | x64 | glibc |
+| Linux | x64 | musl (Alpine) |
+| Windows | ARM64 | — |
+| Windows | x64 | — |
+
+Linux has one package per libc flavor because a glibc-linked binary cannot run
+on musl at all. The launcher detects which one this machine needs at run time;
+`CUSTOM_BIOME_LINT_LIBC=musl|glibc` overrides that detection if it ever gets it
+wrong. See
+[docs/DISTRIBUTION.md#linux-glibc-vs-musl](docs/DISTRIBUTION.md#linux-glibc-vs-musl).
 
 If your platform isn't listed, `npx custom-biome-lint` prints a clear error
-naming your platform/arch and the supported list — it never falls back to
-compiling from source.
+naming your platform/arch (and libc, on Linux) and the supported list — it
+never falls back to compiling from source.
 
 ### Building from source (contributors, git submodule consumers)
 
@@ -82,7 +90,7 @@ Rust **is** required for this path. See
 | [docs/BENCHMARKING.md](docs/BENCHMARKING.md) | Re-runnable performance harness (`scripts/benchmark.sh`) and current numbers |
 | [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md) | Lexical scope/binding model and identifier resolution: design, limitations, how the rules use it |
 | [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) | How the precompiled-binary npm packages work: platform packages, the JS launcher, the release pipeline |
-| [docs/PUBLISH_TO_NPM.md](docs/PUBLISH_TO_NPM.md) | Publishing/version-bump procedure for the main package and the 6 platform packages |
+| [docs/PUBLISH_TO_NPM.md](docs/PUBLISH_TO_NPM.md) | Publishing/version-bump procedure for the main package and the 8 platform packages |
 
 ## Build
 
@@ -403,13 +411,13 @@ src/
 fixtures/<rule_name>/        valid.js, invalid.js, suppressed.js, edge-cases.js per rule
 tests/integration.rs         end-to-end rule, config and pattern tests
 scripts/benchmark.sh         re-runnable cold/warm/rayon/rule-cost benchmark
-scripts/set-version.js       syncs Cargo.toml + package.json + npm/*/package.json to one version
+scripts/set-version.js       syncs Cargo.toml + package.json + package-lock.json + npm/*/package.json to one version
 bin/cli.js                   npm launcher: resolves platform, execs the precompiled binary
-bin/platform.js              pure platform/arch -> package name mapping, used by cli.js and its tests
+bin/platform.js              pure platform/arch/libc -> package name mapping, used by cli.js and its tests
 npm/<platform>/package.json  one per supported platform, carries only the compiled binary
 docs/                        architecture, rules, testing, setup, CI, migration, caching, benchmarking, distribution
 .github/workflows/ci.yml                  build, test, fmt, clippy, audit, deny
-.github/workflows/publish.yml             tag-triggered: build all 6 targets, publish all 7 npm packages
+.github/workflows/publish.yml             tag-triggered: build all 8 targets, publish all 9 npm packages
 .github/workflows/biome-upgrade-check.yml monthly + on-demand: can we bump Biome yet?
 rustfmt.toml                  formatting config (cargo fmt)
 deny.toml                     license/advisory/source policy (cargo deny)

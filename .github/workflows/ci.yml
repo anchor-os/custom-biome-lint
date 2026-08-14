@@ -7,6 +7,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Kept in step with publish.yml's NODE_VERSION: the launcher is what npm
+  # consumers actually execute, so it should be tested on the same Node the
+  # release pipeline uses.
+  NODE_VERSION: "26.4.0"
 
 permissions:
   contents: read
@@ -50,6 +54,31 @@ jobs:
             echo "expected exit code 1 (violations found), got $code"
             exit 1
           fi
+
+  # The npm launcher (bin/cli.js, bin/platform.js) is pure Node and is what
+  # every npm consumer actually runs — it picks the platform package, detects
+  # the Linux libc flavor, and forwards signals. None of that is covered by
+  # `cargo test`, and until this job existed its 31 tests never ran in CI at
+  # all: `npm run test:js` was only ever invoked by hand.
+  #
+  # Its own job rather than a step in build-and-test, so it does not queue
+  # behind a full Rust release build it has no dependency on.
+  launcher:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          # No lockfile install happens here (the launcher has no runtime
+          # dependencies), so there is nothing to cache.
+          package-manager-cache: false
+
+      - name: Launcher tests (bin/*.test.js)
+        run: npm run test:js
 
   supply-chain:
     runs-on: ubuntu-latest
