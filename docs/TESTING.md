@@ -17,7 +17,7 @@ Plus a one-off portability check documented at the end.
 cargo test
 ```
 
-Expected: **198 passing, 0 failing**, in four suites.
+Expected: **203 passing, 0 failing**, in four suites.
 
 ```text
 Running unittests src/lib.rs
@@ -29,8 +29,8 @@ running 0 tests
 test result: ok. 0 passed
 
 Running tests/integration.rs
-running 103 tests
-test result: ok. 103 passed
+running 108 tests
+test result: ok. 108 passed
 
 Doc-tests custom_biome_lint
 running 1 test
@@ -63,7 +63,7 @@ cargo test --lib suppress
 cargo test --lib file_matcher
 ```
 
-### Integration tests (103, in `tests/integration.rs`)
+### Integration tests (108, in `tests/integration.rs`)
 
 These drive the public API — mostly `lint_source`, which runs the full
 parse → check → suppression-filter pipeline, the same path the CLI uses. The
@@ -76,11 +76,11 @@ drives `FileContext::semantic()` directly.
 | `no_native_map` | 14 | Native `Map` reported; Immutable named/default/aliased import, namespace-plus-destructure, `require` alias, and destructuring/member-access directly off a `require()` call all allowed; `Map` from an unrelated module still reported; suppressions work; edge cases produce exactly the documented violations; a parameter shadowing a real Immutable import is reported as native (the semantic-migration fix); nested-block shadowing resolves each reference independently; a local `Map` unrelated to Immutable is still reported |
 | `reselect_arity_match` | 9 | Mismatched arity reported, matching arity allowed, member-expression callee (`reselect.createSelector`) checked, suppressions work, edge cases flag only the namespaced mismatch; an aliased reselect import is checked; a same-named local function and a `createSelector` from another module are not treated as reselect; a shadowing parameter is not treated as reselect |
 | `no_arrow_function_create_selector` | 9 | Wrapped `createSelector` reported with a fix attached, direct call and `make*` factory allowed, suppressions work, edge cases flag only the non-factory `make`-prefixed name, an `async` wrapper is reported but left without a fix; an aliased reselect import is recognized; a same-named local function, a `createSelector` from another module, and a shadowing parameter are not treated as reselect |
-| `semantic_model` | 20 | Basic declarations, function parameters, nested-scope shadowing, all four import forms and their source/imported/local fields, a parameter and a local redeclaration each shadowing a same-named import, object/array destructuring (including a computed key as a reference), arrow parameters, block scope, catch scope, a switch statement's cases sharing one block scope, `var` hoisting out of a nested block, a `let` scoped to a `for` loop head, the scope parent-chain hierarchy |
+| `semantic_model` | 24 | Basic declarations, function parameters, nested-scope shadowing, all four import forms and their source/imported/local fields, a parameter and a local redeclaration each shadowing a same-named import, object/array destructuring (including a computed key as a reference), arrow parameters, block scope, catch scope, a switch statement's cases sharing one block scope, `var` hoisting out of a nested block, a `let` scoped to a `for` loop head, the scope parent-chain hierarchy; class/static/object method and setter parameters bound, a method parameter shadowing an outer binding, a getter body owning its own scope, assignment targets resolving through `resolve_assignment` under shadowing |
 | `patterns` | 4 | Bare directory expands to a brace glob, bare directory discovers every fixture, explicit glob passed through unchanged, `node_modules` never walked |
 | `cli_behavior` | 6 | `--format json` still emits a document when every rule is disabled; `--auto-fix` unwraps the arrow and relints clean; `--auto-fix --dry-run` leaves the file untouched; `--write-fix` and `--auto-fix` together is rejected; a narrower run over a cache-populated superset finds every file cache-valid (`filesChecked + filesCacheSkipped` accounts for every discovered file); an opt-in rule reports nothing until `package.json` enables it, then reports (the default-severity plumbing, end to end through the real binary) |
 | `destructure_default_param_assign` | 9 | Destructured-parameter reassignment reported at an asserted line/col with the name in the message; plain parameters and property writes left to their own rules; a shadowing local not reported; nested and array destructuring reported; compound/update/`for-of` reassignment and a parenthesized target reported; suppressions work; fixture counts pinned |
-| `destructure_param_prop_assign` | 7 | Property mutation of a destructured parameter reported; depth 1/2/3 all reported and all anchored on the parameter name; plain parameters, reads, mutating method calls and aliased mutation not reported; suppressions work; fixture counts pinned |
+| `destructure_param_prop_assign` | 8 | Property mutation of a destructured parameter reported; depth 1/2/3 all reported and all anchored on the parameter name; plain parameters, reads, mutating method calls and aliased mutation not reported; mutation inside class/static/object methods, a setter and a class-field arrow all reported; suppressions work; fixture counts pinned |
 | `bare_arrow_param_prop_assign` | 7 | Mutation through an unparenthesized single parameter reported; parenthesized, multi-param, named-function and destructured forms not reported; bare reassignment left to Biome; resolution works across nested arrows; suppressions work; fixture counts pinned |
 | `deep_param_prop_assign` | 6 | Depth-2+ chains reported with the chain quoted in the message; depth 1 and destructured roots not reported; arrow-parens style irrelevant; suppressions work; fixture counts pinned |
 | `opt_in_rule_overlap` | 2 | A bare-arrow parameter mutated 2+ levels deep is reported by *both* opt-in rules on the same line, and one marker naming both suppresses both |

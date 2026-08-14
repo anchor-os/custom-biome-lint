@@ -6,9 +6,11 @@
 //! inside expressions, JSX, or anything else without a case for every
 //! possible container.
 //!
-//! Two passes, not one: while walking, every reference identifier is
-//! recorded as `(offset, scope, name)` in `pending_refs` rather than
-//! resolved immediately. Resolution happens once, after the whole tree (and
+//! Two passes, not one: while walking, every reference identifier -- and
+//! every assignment target, which Biome models as the distinct
+//! `JsIdentifierAssignment` node type -- is recorded as
+//! `(offset, scope, name)` in `pending_refs` rather than resolved
+//! immediately. Resolution happens once, after the whole tree (and
 //! so every scope's full set of bindings) is known. Resolving eagerly
 //! during the walk would get forward references wrong -- a function that
 //! calls another function declared later in the same scope, or a variable
@@ -26,10 +28,12 @@ use biome_js_syntax::{
     AnyJsFormalParameter, AnyJsFunctionBody, AnyJsImportClause, AnyJsNamedImportSpecifier,
     AnyJsObjectBindingPatternMember, AnyJsParameter, JsArrowFunctionExpression, JsCatchClause,
     JsClassDeclaration, JsDefaultImportSpecifier, JsForInStatement, JsForOfStatement,
-    JsForStatement, JsForVariableDeclaration, JsFunctionDeclaration, JsFunctionExpression,
-    JsIdentifierAssignment, JsImport, JsInitializerClause, JsNamedImportSpecifiers,
-    JsNamespaceImportSpecifier, JsParameters, JsReferenceIdentifier, JsSwitchStatement,
-    JsSyntaxKind, JsSyntaxNode, JsVariableDeclaration, JsVariableDeclarator,
+    JsForStatement, JsForVariableDeclaration, JsFunctionBody, JsFunctionDeclaration,
+    JsFunctionExpression, JsGetterClassMember, JsGetterObjectMember, JsIdentifierAssignment,
+    JsImport, JsInitializerClause, JsMethodClassMember, JsMethodObjectMember,
+    JsNamedImportSpecifiers, JsNamespaceImportSpecifier, JsParameters, JsReferenceIdentifier,
+    JsSetterClassMember, JsSetterObjectMember, JsSwitchStatement, JsSyntaxKind, JsSyntaxNode,
+    JsVariableDeclaration, JsVariableDeclarator,
 };
 use biome_rowan::{AstNode, AstSeparatedList};
 
@@ -156,6 +160,64 @@ impl Builder {
             JsSyntaxKind::JS_CLASS_DECLARATION => {
                 if let Some(decl) = JsClassDeclaration::cast_ref(node) {
                     self.handle_class_declaration(&decl, scope);
+                }
+            }
+            // Callable class/object members. Each owns a function scope holding
+            // its parameters, exactly like a function expression -- without
+            // these arms a method's parameters are never bound at all, and an
+            // identifier in its body resolves straight past them to whatever
+            // the enclosing scope happens to have (or to nothing).
+            JsSyntaxKind::JS_METHOD_CLASS_MEMBER => {
+                if let Some(member) = JsMethodClassMember::cast_ref(node) {
+                    self.handle_callable_member(
+                        member.parameters().ok().as_ref(),
+                        None,
+                        member.body().ok(),
+                        scope,
+                    );
+                }
+            }
+            JsSyntaxKind::JS_METHOD_OBJECT_MEMBER => {
+                if let Some(member) = JsMethodObjectMember::cast_ref(node) {
+                    self.handle_callable_member(
+                        member.parameters().ok().as_ref(),
+                        None,
+                        member.body().ok(),
+                        scope,
+                    );
+                }
+            }
+            // A setter takes exactly one parameter and is not wrapped in a
+            // `JsParameters` list; a getter takes none. Both still need their
+            // own scope so declarations in the body don't leak outward.
+            JsSyntaxKind::JS_SETTER_CLASS_MEMBER => {
+                if let Some(member) = JsSetterClassMember::cast_ref(node) {
+                    self.handle_callable_member(
+                        None,
+                        member.parameter().ok().as_ref(),
+                        member.body().ok(),
+                        scope,
+                    );
+                }
+            }
+            JsSyntaxKind::JS_SETTER_OBJECT_MEMBER => {
+                if let Some(member) = JsSetterObjectMember::cast_ref(node) {
+                    self.handle_callable_member(
+                        None,
+                        member.parameter().ok().as_ref(),
+                        member.body().ok(),
+                        scope,
+                    );
+                }
+            }
+            JsSyntaxKind::JS_GETTER_CLASS_MEMBER => {
+                if let Some(member) = JsGetterClassMember::cast_ref(node) {
+                    self.handle_callable_member(None, None, member.body().ok(), scope);
+                }
+            }
+            JsSyntaxKind::JS_GETTER_OBJECT_MEMBER => {
+                if let Some(member) = JsGetterObjectMember::cast_ref(node) {
+                    self.handle_callable_member(None, None, member.body().ok(), scope);
                 }
             }
             JsSyntaxKind::JS_BLOCK_STATEMENT => {
@@ -448,6 +510,42 @@ impl Builder {
                 AnyJsFunctionBody::AnyJsExpression(expr) => {
                     self.walk(expr.syntax(), function_scope);
                 }
+            }
+        }
+    }
+
+    /// One function scope for a class/object method, getter or setter: its
+    /// parameters (from a `JsParameters` list for a method, or the single
+    /// unlisted `parameter()` for a setter) plus its body.
+    ///
+    /// Deliberately does not bind the member's *name* anywhere — a method name
+    /// is a property of the class or object, not a binding in any lexical
+    /// scope, so there is nothing for an identifier to resolve to.
+    fn handle_callable_member(
+        &mut self,
+        parameters: Option<&JsParameters>,
+        setter_parameter: Option<&AnyJsFormalParameter>,
+        body: Option<JsFunctionBody>,
+        scope: ScopeId,
+    ) {
+        let function_scope = self.push_scope(ScopeKind::Function, Some(scope));
+        if let Some(parameters) = parameters {
+            self.bind_parameters(parameters, function_scope);
+        }
+        if let Some(AnyJsFormalParameter::JsFormalParameter(parameter)) = setter_parameter {
+            if let Ok(pattern) = parameter.binding() {
+                self.collect_pattern_bindings(
+                    &pattern,
+                    BindingKind::Parameter,
+                    function_scope,
+                    function_scope,
+                );
+            }
+            self.walk_default(parameter.initializer(), function_scope);
+        }
+        if let Some(body) = body {
+            for statement in body.statements() {
+                self.walk(statement.syntax(), function_scope);
             }
         }
     }

@@ -772,6 +772,108 @@ mod semantic_model {
             .unwrap_or_else(|| panic!("no occurrence #{n} of reference `{name}` in source"))
     }
 
+    /// Class and object methods, and setters, each own a function scope
+    /// holding their parameters. Before these were handled, a method's
+    /// parameters were never bound and an identifier in the body resolved
+    /// straight past them.
+    #[test]
+    fn callable_member_parameters_are_bound() {
+        let cases = [
+            (
+                "class method",
+                "class C {\n  m(value) { return value; }\n}\n",
+            ),
+            (
+                "static method",
+                "class C {\n  static m(value) { return value; }\n}\n",
+            ),
+            (
+                "object method",
+                "const o = {\n  m(value) { return value; }\n};\n",
+            ),
+            (
+                "class setter",
+                "class C {\n  set v(value) { this.x = value; }\n}\n",
+            ),
+            (
+                "object setter",
+                "const o = {\n  set v(value) { this.x = value; }\n};\n",
+            ),
+        ];
+        for (label, source) in cases {
+            let file = FileContext::parse(source, Path::new("a.js"));
+            let model = file.semantic();
+            let reference = nth_reference(&file, "value", 0);
+            let binding = model
+                .resolve(&reference)
+                .unwrap_or_else(|| panic!("{label}: `value` did not resolve"));
+            assert_eq!(binding.kind, BindingKind::Parameter, "{label}");
+        }
+    }
+
+    /// A method parameter shadows an outer binding of the same name, and the
+    /// method's own scope does not leak outward.
+    #[test]
+    fn a_method_parameter_shadows_an_outer_binding() {
+        let file =
+            parse("const value = 'outer';\nclass C {\n  m(value) { return value; }\n}\nvalue;\n");
+        let model = file.semantic();
+
+        let inner = model.resolve(&nth_reference(&file, "value", 0)).unwrap();
+        assert_eq!(inner.kind, BindingKind::Parameter, "inside the method");
+
+        let outer = model.resolve(&nth_reference(&file, "value", 1)).unwrap();
+        assert_eq!(outer.kind, BindingKind::Const, "after the class");
+    }
+
+    /// A getter has no parameters, but still needs its own scope so a
+    /// declaration in its body does not leak into the enclosing one.
+    #[test]
+    fn a_getter_body_gets_its_own_scope() {
+        let file =
+            parse("class C {\n  get v() {\n    const inner = 1;\n    return inner;\n  }\n}\n");
+        let model = file.semantic();
+        let binding = model.resolve(&nth_reference(&file, "inner", 0)).unwrap();
+        assert_eq!(binding.kind, BindingKind::Const);
+        assert_ne!(
+            binding.scope,
+            model.global_scope(),
+            "the getter body must not declare into the global scope"
+        );
+    }
+
+    /// Assignment targets resolve through `resolve_assignment`, and with the
+    /// same shadowing rules as a read reference.
+    #[test]
+    fn assignment_targets_resolve_to_their_binding() {
+        use biome_js_syntax::JsIdentifierAssignment;
+
+        let file =
+            parse("function f({ b }) {\n  b = 1;\n  {\n    let b = 2;\n    b = 3;\n  }\n}\n");
+        let model = file.semantic();
+        let targets: Vec<JsIdentifierAssignment> = file
+            .tree()
+            .descendants()
+            .filter_map(JsIdentifierAssignment::cast)
+            .collect();
+        // Two, not three: `let b = 2` is a declarator, not an assignment.
+        assert_eq!(targets.len(), 2, "`b = 1` and `b = 3`");
+
+        let outer = model.resolve_assignment(&targets[0]).unwrap();
+        assert_eq!(
+            outer.kind,
+            BindingKind::Parameter,
+            "`b = 1` is the parameter"
+        );
+
+        let inner = model.resolve_assignment(&targets[1]).unwrap();
+        assert_eq!(
+            inner.kind,
+            BindingKind::Let,
+            "`b = 3` is the block-scoped let"
+        );
+    }
+
     #[test]
     fn basic_declarations_are_all_resolvable() {
         let file = parse(
@@ -1251,6 +1353,24 @@ mod destructure_param_prop_assign {
             Path::new("a.js"),
         );
         assert!(violations.is_empty());
+    }
+
+    /// Class and object methods bind their parameters like any other
+    /// callable, so a mutation inside one is reported the same way.
+    #[test]
+    fn flags_mutation_inside_class_and_object_methods() {
+        let cases = [
+            "class C {\n  update({ state }) {\n    state.value = 1;\n  }\n}\n",
+            "class C {\n  static update({ state }) {\n    state.value = 1;\n  }\n}\n",
+            "const o = {\n  update({ state }) {\n    state.value = 1;\n  }\n};\n",
+            "class C {\n  set v({ state }) {\n    state.value = 1;\n  }\n}\n",
+            "class C {\n  update = ({ state }) => {\n    state.value = 1;\n  };\n}\n",
+        ];
+        for source in cases {
+            let violations = check_source(RULE, source, Path::new("a.js"));
+            assert_eq!(violations.len(), 1, "not reported in: {source}");
+            assert_eq!(violations[0].line, 3, "in: {source}");
+        }
     }
 
     #[test]

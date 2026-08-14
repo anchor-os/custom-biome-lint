@@ -9,21 +9,24 @@ Deviations from the plan as written, all deliberate:
 
 | Plan said | Shipped as | Why |
 | --- | --- | --- |
-| Rule names `destructureDefaultParamAssign`, `destructureParamPropAssign` | `destructure-default-param-assign`, `destructure-param-prop-assign` | The `Rule` trait requires kebab-case names (`ADDING_A_RULE.md`); the plan's camelCase spellings were inconsistent with its own rules 3 & 4. |
+| Rule names `destructure-default-param-assign`, `destructure-param-prop-assign` | `destructure-default-param-assign`, `destructure-param-prop-assign` | The `Rule` trait requires kebab-case names (`ADDING_A_RULE.md`); the plan's camelCase spellings were inconsistent with its own rules 3 & 4. |
 | `RuleRegistry::enabled` filters on `config.severity_override(name).unwrap_or_else(\|\| rule.default_severity())` | `config.severity(name, rule.default_severity())`, a new method | `severity_override` returns `None` for *both* "no entry" and `"off"`, so the plan's expression would have resurrected an explicitly-disabled rule at its default severity. |
 | Rule 3's coverage of bare *reassignment* left "to decide at implementation time" | Not covered | Decided by repro, as the plan asked: Biome 2.5.8 **does** flag `d => { d = 5 }`. Only property mutation is missed, so only property mutation is in scope. |
 | Rule 3 detection by visiting `JsArrowFunctionExpression` nodes and walking their bodies | Uniform assignment-target walk, filtered on the parameter binding's declared shape | Same result with no body-walking special case, and nested-arrow attribution falls out of semantic resolution rather than needing its own handling. |
 | Expected ~13 findings from rules 1/2 and ~101 from rules 3/4 on the dashboard | 12 and 218 | Verified in full; see [RULES.md](RULES.md#the-four-parameter-mutation-rules). The estimates counted existing `eslint-disable` comments bucketed by cause; the rules report every occurrence, and 96% of findings still land on a previously-suppressed line. |
 
-The original proposal follows unchanged.
+The original proposal follows below, with two corrections applied in place so
+nothing in it is copy-pasteable-but-wrong: rule names are the shipped kebab-case
+ones throughout, and the superseded `severity_override` recipe is marked as such
+where it appears.
 
 Covers all 186 of the dashboard's uncovered `no-param-reassign` entries, in two
 pairs:
 
 | # | Rule | Closes | Default |
 | --- | --- | --- | --- |
-| 1 | `destructureDefaultParamAssign` | destructured-param reassignment (13 entries) | always on |
-| 2 | `destructureParamPropAssign` | destructured-param property mutation (13 entries, shared with #1) | always on |
+| 1 | `destructure-default-param-assign` | destructured-param reassignment (13 entries) | always on |
+| 2 | `destructure-param-prop-assign` | destructured-param property mutation (13 entries, shared with #1) | always on |
 | 3 | `bare-arrow-param-prop-assign` | plain-param property mutation on an unparenthesized single-arrow parameter (~69 of 173) | **off**, opt-in |
 | 4 | `deep-param-prop-assign` | plain-param property mutation 2+ levels deep (~32 of 173, overlaps with #3 on some lines) | **off**, opt-in |
 
@@ -84,20 +87,20 @@ examples from the dashboard's 13 confirmed cases (see
 `no-param-reassign-classification.md`):
 
 ```js
-// src/sagas/getSMSSessionsOfCustomers.js — destructureParamPropAssign territory
+// src/sagas/getSMSSessionsOfCustomers.js — destructure-param-prop-assign territory
 export function* getSMSSessionsOfCustomersSaga({ payload }) {
   payload.token = yield call(getIdToken);
   ...
 }
 
-// src/lib/objects.js — destructureParamPropAssign territory
+// src/lib/objects.js — destructure-param-prop-assign territory
 export const renameObjKey = ({ obj, oldName, newName }) => {
   obj[newName] = obj[oldName];
   delete obj[oldName];
   ...
 };
 
-// src/util/barcodeSuggestionsGenerator.js — destructureDefaultParamAssign territory
+// src/util/barcodeSuggestionsGenerator.js — destructure-default-param-assign territory
 const generateBarcodeSuggestions = ({ barcodeFormat = 'EAN_8', prefix = '', showHelnyCodeOption = false }) => {
   if (prefix.length < 8) { ... } else {
     prefix = ''; // reassigning the destructured (default-valued) binding itself
@@ -106,7 +109,7 @@ const generateBarcodeSuggestions = ({ barcodeFormat = 'EAN_8', prefix = '', show
 };
 ```
 
-## Rule 1: `destructureDefaultParamAssign`
+## Rule 1: `destructure-default-param-assign`
 
 **Message:** `Reassigning destructured parameter "<name>" mutates a local
 binding a caller can't see change. Use a new local variable instead.`
@@ -190,7 +193,7 @@ Standard, no per-rule wiring needed — the runner's generic
 
 ```js
 function f({ b = '' }) {
-  // custom-biome-ignore-next-line destructureDefaultParamAssign
+  // custom-biome-ignore-next-line destructure-default-param-assign
   b = 'x';
 }
 ```
@@ -228,7 +231,7 @@ function f({ b = '' }) {
   where `b` is destructured all count as reassignment, same as
   `noParameterAssign` treats them for plain parameters.
 
-## Rule 2: `destructureParamPropAssign`
+## Rule 2: `destructure-param-prop-assign`
 
 **Message:** `Mutating a property of destructured parameter "<name>" changes
 data the caller still holds a reference to. Copy it first.`
@@ -307,8 +310,8 @@ purely on the assignment target's shape:
 
 | Target shape | Rule |
 | --- | --- |
-| `AnyJsExpression::JsIdentifierExpression` (bare identifier) | Rule 1 (`destructureDefaultParamAssign`) |
-| `AnyJsExpression::JsStaticMemberExpression` / `JsComputedMemberExpression` whose root resolves to a destructured parameter | Rule 2 (`destructureParamPropAssign`) |
+| `AnyJsExpression::JsIdentifierExpression` (bare identifier) | Rule 1 (`destructure-default-param-assign`) |
+| `AnyJsExpression::JsStaticMemberExpression` / `JsComputedMemberExpression` whose root resolves to a destructured parameter | Rule 2 (`destructure-param-prop-assign`) |
 
 A single shared helper — say `fn destructured_param_binding(root_ident, file) ->
 Option<String>` (returns the parameter name if it resolves to one) — belongs in
@@ -324,7 +327,7 @@ Same generic mechanism as Rule 1 and all existing rules:
 
 ```js
 const f = ({ payload }) => {
-  // custom-biome-ignore-next-line destructureParamPropAssign
+  // custom-biome-ignore-next-line destructure-param-prop-assign
   payload.token = val;
 };
 ```
@@ -655,6 +658,12 @@ filters with `!config.is_ignored(rule.name())`, needs to instead ask "what
 severity would this rule run at" and skip only when that resolves to `Off`:
 
 ```rust
+// SUPERSEDED -- do not copy. `severity_override` returns `None` for both "no
+// entry" and an explicit `"off"`, so this expression re-enables a rule the
+// repo deliberately disabled, at its default severity. Shipped instead as:
+//
+//     config.severity(rule.name(), rule.default_severity()) != RuleSeverity::Off
+//
 .filter(|rule| {
     config
         .severity_override(rule.name())
@@ -734,8 +743,8 @@ Two independent mechanisms exist (`src/fixer.rs` vs. `src/autofix.rs`):
 
 | Rule | `Fix`? | Why |
 | --- | --- | --- |
-| 1. `destructureDefaultParamAssign` | **No** | The only real fix is renaming the destructured binding and every reference to it within the enclosing scope — a multi-site rewrite, not a single byte-range replacement `Fix` supports. Same reasoning as Biome's own `noParameterAssign`, which itself has no fix ("use a local variable instead" is a suggestion in the diagnostic text, not something Biome rewrites for you — confirmed via `biome explain noParameterAssign`). |
-| 2. `destructureParamPropAssign` | **No** | The real fix is "copy the object before mutating it," but the correct copy shape (shallow object spread, deep clone, `Immutable.js`-aware update) can't be inferred from the mutation site alone — same "would have to guess" disqualifier `reselect-arity-match` and `no-native-map` already use. |
+| 1. `destructure-default-param-assign` | **No** | The only real fix is renaming the destructured binding and every reference to it within the enclosing scope — a multi-site rewrite, not a single byte-range replacement `Fix` supports. Same reasoning as Biome's own `noParameterAssign`, which itself has no fix ("use a local variable instead" is a suggestion in the diagnostic text, not something Biome rewrites for you — confirmed via `biome explain noParameterAssign`). |
+| 2. `destructure-param-prop-assign` | **No** | The real fix is "copy the object before mutating it," but the correct copy shape (shallow object spread, deep clone, `Immutable.js`-aware update) can't be inferred from the mutation site alone — same "would have to guess" disqualifier `reselect-arity-match` and `no-native-map` already use. |
 | 3. `bare-arrow-param-prop-assign` | **No** | A mechanically safe fix *exists* — wrap the bare parameter in parens (`item =>` → `(item) =>`) — but it doesn't resolve the violation, it just hands the same mutation to Biome's `noParameterAssign` to re-report under a different rule name on the next run. An "autofix" whose result is "still flagged, now by a different tool" is worse UX than reporting it as unfixable, so no `Fix` is attached. (If the maintainers want the parens-only mechanical fix anyway as a distinct convenience separate from resolving the mutation concern, that would need its own explicit design discussion — flagged here, not decided.) |
 | 4. `deep-param-prop-assign` | **No** | Same reasoning as #2 — the real fix is copying before mutating, and the correct copy shape can't be inferred generically. |
 
@@ -757,8 +766,10 @@ end-to-end by following this list in order.
    `default_severity(&self) -> RuleSeverity { RuleSeverity::Error }` to the
    `Rule` trait in `src/rules/rule.rs`. Update `RuleRegistry::enabled()` and
    `RuleRegistry::ignored()` in `src/rules/registry.rs` to consult
-   `config.severity_override(rule.name()).unwrap_or_else(|| rule.default_severity())`
-   instead of `config.is_ignored(rule.name())`. Add a test to
+   `config.severity(rule.name(), rule.default_severity())` instead of
+   `config.is_ignored(rule.name())` (the checklist originally said
+   `severity_override(..).unwrap_or_else(..)` here; see the deviation table at
+   the top for why that is wrong). Add a test to
    `src/config/package_config.rs` (or a new registry test) proving: (a) a
    rule with `default_severity() == Error` and no config entry is enabled
    (existing behavior, must not regress — run the full existing test suite
@@ -776,7 +787,7 @@ end-to-end by following this list in order.
    4's "not destructured" check), (c) chain-depth counter (needed by Rule 4).
    Building this before the four rule files avoids four slightly-different
    copies of the same walk.
-3. **Rule 1 — `destructureDefaultParamAssign`.** Create
+3. **Rule 1 — `destructure-default-param-assign`.** Create
    `src/rules/destructure_default_param_assign.rs`. Detection per the sketch
    above: assignment/update/for-of-in targets that are bare identifiers,
    resolved via `file.semantic()` to a `Parameter` binding, filtered to
@@ -791,7 +802,7 @@ end-to-end by following this list in order.
    `tests/integration.rs` following the `no_console_log` shape in
    `ADDING_A_RULE.md`: a flagged case with asserted line/col, a plain-param
    near-miss that must not fire, a suppression case.
-6. **Rule 2 — `destructureParamPropAssign`.** Create
+6. **Rule 2 — `destructure-param-prop-assign`.** Create
    `src/rules/destructure_param_prop_assign.rs`, reusing the Step 2 chain-root
    walker and destructured-classifier. Detection per the sketch above:
    member-expression assignment targets whose root resolves to a destructured

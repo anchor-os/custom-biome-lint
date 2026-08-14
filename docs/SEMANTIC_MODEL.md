@@ -109,16 +109,23 @@ their own scope.
 
 `src/semantic/builder.rs` walks the tree exactly once, matching on
 `JsSyntaxKind` for the handful of constructs that create a scope or a
-binding (functions, arrows, blocks, loops, catch clauses, variable
-declarations, imports, class declarations) and otherwise just recursing into
-every child node unchanged. That fallback is what lets the walk find an arrow
+binding (functions, arrows, class/object methods, getters, setters, blocks,
+loops, catch clauses, variable declarations, imports, class declarations) and
+otherwise just recursing into every child node unchanged. That fallback is what lets the walk find an arrow
 function nested three levels deep inside a call argument or a JSX expression
 container without a special case for every possible container node — nothing
 about *how* a scope-creating construct is reached matters, only that it's
 reached.
 
+A method, getter or setter gets a `Function` scope holding its parameters, just
+like a function expression — a getter has none, and a setter's single parameter
+is not wrapped in a `JsParameters` list, but both still own a scope so
+declarations in their bodies don't leak outward. Their *names* are deliberately
+not bound anywhere: a method name is a property of the class or object, not a
+binding any identifier can resolve to.
+
 Resolution happens in a second, much cheaper pass, not during the walk:
-every reference identifier is recorded as `(byte offset, current scope, name)`
+every reference identifier and assignment target is recorded as `(byte offset, current scope, name)`
 while walking, and only resolved against the *complete* scope tree afterward.
 Resolving eagerly during the walk would get forward references wrong — a
 function that calls another function declared later in the same scope, or a

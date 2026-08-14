@@ -18,7 +18,7 @@ handles JSX inside `.js` files.
 | `destructure-default-param-assign` | Reassigning a parameter binding that came from destructuring — `function f({ b }) { b = 'x' }`. Biome's `noParameterAssign` only tracks plain identifier parameters. |
 | `destructure-param-prop-assign` | Mutating a property of a destructured parameter at **any** depth — `({ state }) => { state.tours[id].bands = {} }`. Biome's equivalent check tracks one level. |
 | `bare-arrow-param-prop-assign` **(off by default)** | Property mutation through an arrow's unparenthesized single parameter — `d => { d.token = 'x' }` — an AST shape Biome's `noParameterAssign` does not see. |
-| `deep-param-prop-assign` **(off by default)** | Plain-parameter mutation 2+ levels deep — `function f(acc) { acc[x][y] = 1 }` — past the one level Biome tracks. |
+| `deep-param-prop-assign` **(off by default)** | Plain-parameter mutation 2+ levels deep — `function f(acc) { acc[x][y] = 1 }` — beyond Biome's one-level limit. |
 
 The first three are direct ports of the corresponding rules in `eslint-rules/`,
 deliberately behaviour-for-behaviour rather than "improved", so that enabling
