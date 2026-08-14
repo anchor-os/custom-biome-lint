@@ -15,7 +15,7 @@ pub use output::{Reporter, HELP};
 use crate::analyzer::{analyze_file, discover_files, resolve_pattern, GlobSet};
 use crate::autofix::Autofix;
 use crate::cache::{hash_content, CacheManager};
-use crate::config::{PackageConfig, RuleSeverity};
+use crate::config::{PackageConfig, RuleSeverity, CONFIG_KEY};
 use crate::diagnostics::{tally, FileReport, Severity, Violation};
 use crate::fixer::Fixer;
 use crate::rules::RuleRegistry;
@@ -66,7 +66,7 @@ where
         None => vlog!(
             reporter,
             1,
-            "config: no package.json found; all rules enabled"
+            "config: no package.json found; every default-on rule enabled"
         ),
     }
 
@@ -80,18 +80,26 @@ where
             registry.len()
         );
         reporter.print_rules(&registry);
+        // Two different reasons a rule is not running, worth telling apart:
+        // the config turned it off, or it ships off and nothing turned it on.
+        // Only the second is actionable, and only it needs the hint.
         for ignored in registry.ignored(&config) {
-            vlog!(
-                reporter,
-                1,
-                "skipping {} (ignored by config)",
-                ignored.name()
-            );
+            let reason = if config.severities.contains_key(ignored.name()) {
+                "ignored by config".to_string()
+            } else {
+                format!(
+                    "off by default; enable with {CONFIG_KEY}: {{ \"{}\": \"error\" }}",
+                    ignored.name()
+                )
+            };
+            vlog!(reporter, 1, "skipping {} ({reason})", ignored.name());
         }
     }
 
     if rules.is_empty() {
-        reporter.warn("every rule is disabled by ignoreBiomeExtensionRules; nothing to check");
+        reporter.warn(&format!(
+            "no rules are enabled: every rule is either disabled by {CONFIG_KEY} or ships off by default; nothing to check"
+        ));
         // --format json must always produce a document on stdout, even here:
         // returning immediately (as this used to) left a CI consumer parsing
         // stdout as JSON with nothing to parse. --write-fix/--auto-fix have no

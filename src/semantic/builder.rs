@@ -170,6 +170,7 @@ impl Builder {
             JsSyntaxKind::JS_METHOD_CLASS_MEMBER => {
                 if let Some(member) = JsMethodClassMember::cast_ref(node) {
                     self.handle_callable_member(
+                        member_name(member.name().ok()),
                         member.parameters().ok().as_ref(),
                         None,
                         member.body().ok(),
@@ -180,6 +181,7 @@ impl Builder {
             JsSyntaxKind::JS_METHOD_OBJECT_MEMBER => {
                 if let Some(member) = JsMethodObjectMember::cast_ref(node) {
                     self.handle_callable_member(
+                        member_name(member.name().ok()),
                         member.parameters().ok().as_ref(),
                         None,
                         member.body().ok(),
@@ -193,6 +195,7 @@ impl Builder {
             JsSyntaxKind::JS_SETTER_CLASS_MEMBER => {
                 if let Some(member) = JsSetterClassMember::cast_ref(node) {
                     self.handle_callable_member(
+                        member_name(member.name().ok()),
                         None,
                         member.parameter().ok().as_ref(),
                         member.body().ok(),
@@ -203,6 +206,7 @@ impl Builder {
             JsSyntaxKind::JS_SETTER_OBJECT_MEMBER => {
                 if let Some(member) = JsSetterObjectMember::cast_ref(node) {
                     self.handle_callable_member(
+                        member_name(member.name().ok()),
                         None,
                         member.parameter().ok().as_ref(),
                         member.body().ok(),
@@ -212,12 +216,24 @@ impl Builder {
             }
             JsSyntaxKind::JS_GETTER_CLASS_MEMBER => {
                 if let Some(member) = JsGetterClassMember::cast_ref(node) {
-                    self.handle_callable_member(None, None, member.body().ok(), scope);
+                    self.handle_callable_member(
+                        member_name(member.name().ok()),
+                        None,
+                        None,
+                        member.body().ok(),
+                        scope,
+                    );
                 }
             }
             JsSyntaxKind::JS_GETTER_OBJECT_MEMBER => {
                 if let Some(member) = JsGetterObjectMember::cast_ref(node) {
-                    self.handle_callable_member(None, None, member.body().ok(), scope);
+                    self.handle_callable_member(
+                        member_name(member.name().ok()),
+                        None,
+                        None,
+                        member.body().ok(),
+                        scope,
+                    );
                 }
             }
             JsSyntaxKind::JS_BLOCK_STATEMENT => {
@@ -523,11 +539,22 @@ impl Builder {
     /// scope, so there is nothing for an identifier to resolve to.
     fn handle_callable_member(
         &mut self,
+        name: Option<JsSyntaxNode>,
         parameters: Option<&JsParameters>,
         setter_parameter: Option<&AnyJsFormalParameter>,
         body: Option<JsFunctionBody>,
         scope: ScopeId,
     ) {
+        // A computed name (`{ [key]() {} }`, `class C { get [key]() {} }`) is an
+        // expression evaluated in the *enclosing* scope, before the member's own
+        // scope exists -- so it is walked here, against `scope`, not
+        // `function_scope`. A literal name has nothing to record and walking it
+        // is a harmless no-op, the same way `collect_pattern_bindings` treats a
+        // destructuring pattern's literal key.
+        if let Some(name) = name {
+            self.walk(&name, scope);
+        }
+
         let function_scope = self.push_scope(ScopeKind::Function, Some(scope));
         if let Some(parameters) = parameters {
             self.bind_parameters(parameters, function_scope);
@@ -838,4 +865,13 @@ impl Builder {
             );
         }
     }
+}
+
+/// The syntax node of a class/object member name, for walking a computed
+/// name's expression. Generic over the two name enums (`AnyJsClassMemberName`
+/// and `AnyJsObjectMemberName`) since only the node is needed.
+fn member_name<N: AstNode<Language = biome_js_syntax::JsLanguage>>(
+    name: Option<N>,
+) -> Option<JsSyntaxNode> {
+    name.map(|name| name.syntax().clone())
 }

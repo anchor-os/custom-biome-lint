@@ -811,6 +811,42 @@ mod semantic_model {
         }
     }
 
+    /// A computed member name is an expression evaluated in the *enclosing*
+    /// scope, before the member's own scope exists. Regression test: when
+    /// callable members gained their own scope handling, they stopped falling
+    /// through to the generic child walk, and a computed name's reference
+    /// briefly stopped resolving at all.
+    #[test]
+    fn computed_member_names_resolve_in_the_enclosing_scope() {
+        let cases = [
+            (
+                "object method",
+                "const key = 'k';\nconst o = { [key]() {} };\n",
+            ),
+            ("class method", "const key = 'k';\nclass C { [key]() {} }\n"),
+            (
+                "class getter",
+                "const key = 'k';\nclass C { get [key]() { return 1; } }\n",
+            ),
+            (
+                "class setter",
+                "const key = 'k';\nclass C { set [key](v) { this.x = v; } }\n",
+            ),
+            (
+                "object setter",
+                "const key = 'k';\nconst o = { set [key](v) { this.x = v; } };\n",
+            ),
+        ];
+        for (label, source) in cases {
+            let file = FileContext::parse(source, Path::new("a.js"));
+            let model = file.semantic();
+            let binding = model
+                .resolve(&nth_reference(&file, "key", 0))
+                .unwrap_or_else(|| panic!("{label}: computed name `key` did not resolve"));
+            assert_eq!(binding.kind, BindingKind::Const, "{label}");
+        }
+    }
+
     /// A method parameter shadows an outer binding of the same name, and the
     /// method's own scope does not leak outward.
     #[test]
