@@ -21,7 +21,7 @@ Add this dependency to `package.json`, then run yarn/npm install:
 
 `bin/cli.js` no longer has a `postinstall` compile step — a `github:` spec
 clones the git tree for the **main** package's source, but its
-`optionalDependencies` (the six `custom-biome-lint-<platform>` packages)
+`optionalDependencies` (the eight `custom-biome-lint-<platform>` packages)
 still resolve from the npm registry exactly as they would for a normal `npm
 install custom-biome-lint`. As long as the commit/branch you're pinning to
 declares `optionalDependencies` versions that exist on the registry, `npm

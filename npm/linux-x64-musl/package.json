@@ -1,0 +1,25 @@
+{
+  "name": "custom-biome-lint-linux-x64-musl",
+  "version": "0.3.0",
+  "description": "Precompiled custom-biome-lint binary for Linux x64 (musl)",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "libc": [
+    "musl"
+  ],
+  "files": [
+    "bin"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anchor-os/custom-biome-lint.git"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

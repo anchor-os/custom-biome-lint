@@ -2,7 +2,7 @@
 
 **Status as of v0.2.0: the package ships precompiled binaries.** `npm
 install custom-biome-lint` needs no Rust toolchain — see
-[DISTRIBUTION.md](DISTRIBUTION.md) for how the main package, the six
+[DISTRIBUTION.md](DISTRIBUTION.md) for how the main package, the eight
 platform packages, and `bin/cli.js` fit together. This document is the
 operational runbook: what to run, in what order, to cut a release.
 
@@ -16,16 +16,16 @@ A single npm package can carry, at most, one binary per publish. Publishing
 a binary built on one machine with no `os`/`cpu` guard means npm will happily
 install (say) an arm64 macOS binary onto a Linux x86-64 CI runner, where it
 fails with `Exec format error` at lint time, not install time. The fix —
-per-platform packages gated by `os`/`cpu`, plus a thin JS launcher that picks
-the right one at runtime — is what [DISTRIBUTION.md](DISTRIBUTION.md)
+per-platform packages gated by `os`/`cpu`/`libc`, plus a thin JS launcher that
+picks the right one at runtime — is what [DISTRIBUTION.md](DISTRIBUTION.md)
 describes and what `.github/workflows/publish.yml` automates. This is the
 same shape Biome, esbuild, and swc use.
 
 ## Release procedure
 
 Releases are cut from a `v<major>.<minor>.<patch>` git tag. Pushing the tag
-triggers `.github/workflows/publish.yml`, which builds all 6 targets and
-publishes all 7 packages (see [DISTRIBUTION.md](DISTRIBUTION.md#release-pipeline)
+triggers `.github/workflows/publish.yml`, which builds all 8 targets and
+publishes all 9 packages (see [DISTRIBUTION.md](DISTRIBUTION.md#release-pipeline)
 for the job breakdown). Steps 1-3 below are what that workflow does — useful
 both to understand what CI is doing and to reproduce a publish by hand if
 CI is ever unavailable. Step 4 is the one part CI does not do, because it is
@@ -38,13 +38,14 @@ node scripts/set-version.js 0.3.0
 ```
 
 This writes `0.3.0` into `Cargo.toml`, the root `package.json` (version +
-all 6 `optionalDependencies` entries), and every `npm/<platform>/package.json`.
+all 8 `optionalDependencies` entries), every `npm/<platform>/package.json`, and
+`package-lock.json`'s version fields.
 Never hand-edit only one of these — see
 [DISTRIBUTION.md#version-sync](DISTRIBUTION.md#version-sync).
 
 ```sh
 cargo build --release   # refreshes Cargo.lock for the new version
-git add Cargo.toml Cargo.lock package.json npm
+git add Cargo.toml Cargo.lock package.json package-lock.json npm
 git commit -m "chore: release v0.3.0"
 git tag -a v0.3.0 -m "v0.3.0"
 git push origin main --follow-tags
@@ -58,7 +59,7 @@ Watch the `Publish to npm` workflow run. It:
 
 1. Derives the release version from the pushed tag once, before anything is
    built (`determine-version` job).
-2. Builds all 6 targets in parallel. Each one first re-runs
+2. Builds all 8 targets in parallel. Each one first re-runs
    `scripts/set-version.js` with that version on its own checkout — so the
    binary it's about to build embeds the release version via
    `env!("CARGO_PKG_VERSION")`, not whatever version happened to be
@@ -67,15 +68,15 @@ Watch the `Publish to npm` workflow run. It:
    exact version.
 3. Re-runs `scripts/set-version.js` again on the publish job's own checkout
    (same version), then explicitly verifies every manifest — `Cargo.toml`,
-   `package.json`, all 6 `npm/<platform>/package.json` — reports it, and
+   `package.json`, all 8 `npm/<platform>/package.json` — reports it, and
    runs `--version` against one staged binary, before publishing anything.
 4. Stages each built binary into `npm/<platform>/bin/`.
-5. Publishes the 6 platform packages, then the main package.
+5. Publishes the 8 platform packages, then the main package.
 
 The `npm-publish` GitHub environment gates the `publish` job behind required
 reviewer approval — see the comment block at the top of `publish.yml` for
 how to configure it, and configure an npm trusted publisher for **each of
-the 7 packages** (the main package plus all 6 platform packages) pointing at
+the 9 packages** (the main package plus all 8 platform packages) pointing at
 this workflow + the `npm-publish` environment. Trusted publishing (OIDC)
 means no `NPM_TOKEN` secret is needed or used.
 
@@ -108,10 +109,10 @@ never required on this machine. Also confirm the registry page renders:
 ### 4. Refresh `package-lock.json` (post-publish, required for `npm ci`)
 
 `scripts/set-version.js` keeps the lockfile's *version numbers* in step with
-`package.json`, but it cannot add the resolved dependency entries for the six
+`package.json`, but it cannot add the resolved dependency entries for the eight
 platform packages: at bump time those versions do not exist on the registry
 yet — this release is what publishes them. Until they are resolved, the
-lockfile lists the six `optionalDependencies` without any matching entry, and
+lockfile lists all eight `optionalDependencies` without any matching entry, and
 `npm ci` refuses the tree:
 
 ```
@@ -135,7 +136,7 @@ git push
 does not depend on the current machine's platform. Run it on a clean `main`
 checkout so the commit contains nothing but the lockfile.
 
-Verify before committing — the six entries should now be present and at the
+Verify before committing — all eight entries should now be present and at the
 released version:
 
 ```sh
@@ -162,7 +163,8 @@ drifted from `0.2.0` to `0.2.1` unnoticed before v0.3.0.
 This is a **different problem from "CI is broken"** — the release workflow can be working
 perfectly and still be unable to publish, the first time a package name has never existed on the
 registry before. It happened on this project's actual first `v0.2.0` release: the `build` job
-succeeded across all 6 platforms, but `publish` failed at the very first `npm publish` call with:
+succeeded across all 6 platforms (there were 6 at the time), but `publish` failed at the very
+first `npm publish` call with:
 
 ```
 npm http fetch POST 404 .../oidc/token/exchange/package/custom-biome-lint-darwin-arm64
@@ -176,8 +178,14 @@ page. There is no equivalent of PyPI's "pending publisher" for a name that has n
 published — confirmed via npm's own docs and the still-open feature request
 [npm/cli#8544, "Allow publishing initial version with OIDC"](https://github.com/npm/cli/issues/8544).
 So for a genuinely new package name, OIDC has nothing to attach to yet, and the very first publish
-has to happen a different way. This bites every one of the 6 platform packages the first time they
-ship, and the main package too if it's ever renamed.
+has to happen a different way. This bites every platform package the first time it ships, and the
+main package too if it's ever renamed.
+
+**This applies right now to `custom-biome-lint-linux-x64-musl` and
+`custom-biome-lint-linux-arm64-musl`.** Neither name has ever been published, so the release that
+first includes them will fail in the `publish` job on those two packages unless they are
+bootstrapped first, by the procedure below. The other 7 packages are unaffected — their trusted
+publishers already exist.
 
 **The one-time fix**, run once per new package name, never needed again once its trusted publisher
 is configured:
@@ -191,13 +199,13 @@ gh run download <build-run-id> --repo anchor-os/custom-biome-lint --dir /tmp/boo
 mkdir -p npm/darwin-arm64/bin
 cp /tmp/bootstrap-artifacts/binary-darwin-arm64/custom-biome-lint npm/darwin-arm64/bin/
 chmod +x npm/darwin-arm64/bin/custom-biome-lint
-# ...repeat for the other 5 platforms
+# ...repeat for the other platforms
 
 # 3. Publish each with your own npm login (npm will likely prompt for browser-based
 #    one-time-password auth — that's expected and can only be completed by a human,
 #    not from an unattended/automated shell):
 (cd npm/darwin-arm64 && npm publish --access public)
-# ...repeat for the other 5 platforms, then the main package:
+# ...repeat for the other platforms, then the main package:
 npm publish --access public
 ```
 
@@ -216,11 +224,11 @@ never applies again — every subsequent version bump goes through `publish.yml`
 
 Only do this if the release workflow itself is broken. It requires a Rust
 toolchain matching `RUST_TOOLCHAIN` in `publish.yml`, and **you can only
-build for your own machine's platform** — building all 6 by hand across
+build for your own machine's platform** — building all 8 by hand across
 different machines is what CI exists to avoid. Prefer fixing CI.
 
 **Never publish the main package after only building your own platform.**
-The main package's `optionalDependencies` pin all 6 platform packages at
+The main package's `optionalDependencies` pin all 8 platform packages at
 this exact version — publishing it while even one platform package is
 missing ships a main package that can never resolve its binary on that
 platform, and the version is immutable once published; there is no fixing
@@ -244,8 +252,9 @@ cp target/release/custom-biome-lint npm/darwin-arm64/bin/
 #    confirm CI's build job already produced and published the rest, and
 #    you're only patching the one platform CI's publish job failed on.
 
-# 4. Only once ALL SIX are confirmed present, publish the main package.
-for pkg in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
+# 4. Only once ALL EIGHT are confirmed present, publish the main package.
+for pkg in darwin-arm64 darwin-x64 linux-arm64 linux-arm64-musl linux-x64 linux-x64-musl \
+           win32-arm64 win32-x64; do
   npm view "custom-biome-lint-$pkg@<version>" version || {
     echo "custom-biome-lint-$pkg is missing at <version> — do not publish main yet"
     exit 1
@@ -260,10 +269,12 @@ the only way to know what's actually going in the tarball.
 
 ## Version bumping details
 
-The version lives in **14 fields across 8 files** and they must all agree:
+The version lives in **28 fields across 11 files** and they must all agree:
 `Cargo.toml`'s version (1), the root `package.json`'s own version (1) plus
-its 6 `optionalDependencies` entries (6), and each of the 6
-`npm/<platform>/package.json` versions (6). `scripts/set-version.js` is the
+its 8 `optionalDependencies` entries (8), each of the 8
+`npm/<platform>/package.json` versions (8), and `package-lock.json`'s two root
+versions (2) plus its own copy of the 8 `optionalDependencies` entries (8).
+`scripts/set-version.js` is the
 only supported way to change it — see
 [DISTRIBUTION.md#version-sync](DISTRIBUTION.md#version-sync). Avoid `npm
 version`; it only touches the root `package.json` and leaves everything else
@@ -296,16 +307,19 @@ Rust toolchain and no build step. See
 
 - **Never reintroduce a `postinstall` compile step.** Normal installation
   must not run `cargo build` under any circumstance.
-- **Version numbers live in 22 fields across 9 files** and
+- **Version numbers live in 28 fields across 11 files** and
   `scripts/set-version.js` is the only supported way to change them.
 - **`package-lock.json` needs a post-publish refresh** (step 4) for `npm ci`
   to work. The resolved platform-package entries cannot exist before the
   release that publishes them, so this is the one version-bookkeeping step
   the release workflow cannot do.
-- **Each of the 7 packages needs its own npm trusted publisher** configured
-  before the release workflow can publish it.
+- **Each of the 9 packages needs its own npm trusted publisher** configured
+  before the release workflow can publish it. The two musl packages do not
+  have one yet — see
+  [first-time bootstrap](#first-time-bootstrap-a-brand-new-package-name).
 - **Published versions are immutable.** `npm unpublish` frees the name, not
   the version number — this applies to platform packages too.
-- **The Linux ARM64 binary is cross-compiled** and cannot be executed by
-  CI — see [DISTRIBUTION.md#limitations](DISTRIBUTION.md#limitations).
-  Windows ARM64 builds and runs natively on a `windows-11-arm` runner.
+- **The Linux ARM64 and both musl binaries are cross-compiled** and cannot be
+  executed by CI — see
+  [DISTRIBUTION.md#limitations](DISTRIBUTION.md#limitations). Windows ARM64
+  builds and runs natively on a `windows-11-arm` runner.

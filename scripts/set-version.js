@@ -2,7 +2,8 @@
 'use strict';
 
 // Keeps Cargo.toml, package.json, package-lock.json, and every
-// npm/<platform>/package.json at the same version for a release. Run before `cargo build --release` and
+// npm/<platform>/package.json at the same version for a release. Run before
+// `cargo build --release` and
 // before packaging the platform npm packages, so every published artifact
 // (main package, optionalDependencies, platform packages, `--version`
 // output) agrees.
@@ -14,11 +15,19 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
+// Every platform package this repo publishes. A platform missing from this
+// list is silently left at whatever version it was last written with — which
+// then ships as a platform package whose version no longer matches the main
+// package's optionalDependencies pin, so its install can never resolve. Add
+// new platforms here in the same commit that adds their npm/<platform>/
+// directory.
 const PLATFORMS = [
   'darwin-arm64',
   'darwin-x64',
   'linux-arm64',
+  'linux-arm64-musl',
   'linux-x64',
+  'linux-x64-musl',
   'win32-arm64',
   'win32-x64',
 ];
@@ -85,10 +94,12 @@ function preflight(version) {
     }
     lock.version = version;
     rootEntry.version = version;
-    for (const platform of PLATFORMS) {
-      const depName = `custom-biome-lint-${platform}`;
-      if (rootEntry.optionalDependencies && depName in rootEntry.optionalDependencies) {
-        rootEntry.optionalDependencies[depName] = version;
+    if (rootEntry.optionalDependencies) {
+      // Assigned unconditionally, not only for keys already present: a newly
+      // added platform must appear in the lockfile too, or `npm ci` rejects
+      // the tree as out of sync with package.json.
+      for (const platform of PLATFORMS) {
+        rootEntry.optionalDependencies[`custom-biome-lint-${platform}`] = version;
       }
     }
     writes.push({ filePath: lockPath, contents: `${JSON.stringify(lock, null, 2)}\n` });

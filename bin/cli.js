@@ -4,6 +4,7 @@
 const path = require('path');
 const { spawn } = require('child_process');
 const {
+  detectLibc,
   resolvePackageName,
   binaryName,
   unsupportedPlatformMessage,
@@ -15,21 +16,25 @@ const FORWARDED_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'];
 // `overridePath` is CUSTOM_BIOME_LINT_BIN — an explicit escape hatch for
 // contributors running a locally built binary (via `npm run build:native`)
 // through this launcher without a matching platform package installed.
-function resolveBinaryPath(platform, arch, overridePath) {
+// `libc` is 'glibc' | 'musl' on Linux and null elsewhere. It is a parameter
+// with a default rather than probed inside the resolution logic so tests can
+// resolve either flavor from any host; the default keeps every existing caller
+// (and every non-Linux platform, where it is null) behaving as before.
+function resolveBinaryPath(platform, arch, overridePath, libc = detectLibc(platform)) {
   if (overridePath) {
     return { binPath: overridePath };
   }
 
-  const packageName = resolvePackageName(platform, arch);
+  const packageName = resolvePackageName(platform, arch, libc);
   if (!packageName) {
-    return { error: unsupportedPlatformMessage(platform, arch) };
+    return { error: unsupportedPlatformMessage(platform, arch, libc) };
   }
 
   let packageJsonPath;
   try {
     packageJsonPath = require.resolve(`${packageName}/package.json`);
   } catch {
-    return { error: missingPackageMessage(platform, arch, packageName) };
+    return { error: missingPackageMessage(platform, arch, packageName, libc) };
   }
 
   return {
@@ -38,7 +43,15 @@ function resolveBinaryPath(platform, arch, overridePath) {
 }
 
 function run(platform, arch, args, { spawnFn = spawn, env = process.env } = {}) {
-  const { binPath, error } = resolveBinaryPath(platform, arch, env.CUSTOM_BIOME_LINT_BIN);
+  // Detected here, from the same `env` the tests inject, so a
+  // CUSTOM_BIOME_LINT_LIBC override honors the injected environment rather
+  // than the real process environment.
+  const { binPath, error } = resolveBinaryPath(
+    platform,
+    arch,
+    env.CUSTOM_BIOME_LINT_BIN,
+    detectLibc(platform, { env })
+  );
   if (error) {
     console.error(error);
     process.exitCode = 1;
