@@ -1136,6 +1136,19 @@ mod destructure_default_param_assign {
         assert_eq!(violations[1].line, 5);
     }
 
+    /// A parenthesized target reaches the rule as the inner identifier node,
+    /// so no parenthesis unwrapping is needed anywhere.
+    #[test]
+    fn flags_a_parenthesized_target() {
+        let violations = check_source(
+            RULE,
+            "function f({ b }) {\n  (b) = 1;\n}\n",
+            Path::new("a.js"),
+        );
+        assert_eq!(violations.len(), 1);
+        assert_eq!((violations[0].line, violations[0].col), (2, 4));
+    }
+
     #[test]
     fn flags_compound_update_and_loop_head_reassignment() {
         let violations = check_source(

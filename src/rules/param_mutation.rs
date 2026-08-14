@@ -220,14 +220,14 @@ impl MemberTarget {
     }
 }
 
-/// The bare-identifier form of an assignment target, unwrapping any
-/// parentheses (`(x) = 1`).
+/// The bare-identifier form of an assignment target.
+///
+/// No parenthesis handling needed: `(x) = 1` wraps the identifier in a
+/// `JsParenthesizedAssignment`, but the `JsIdentifierAssignment` inside it is
+/// itself a descendant, so [`assignment_targets`] yields it directly.
 pub fn identifier_target(target: &AnyJsAssignment) -> Option<JsIdentifierAssignment> {
     match target {
         AnyJsAssignment::JsIdentifierAssignment(ident) => Some(ident.clone()),
-        AnyJsAssignment::JsParenthesizedAssignment(paren) => {
-            identifier_target(&paren.assignment().ok()?)
-        }
         _ => None,
     }
 }
