@@ -444,7 +444,9 @@ precisely because plain parameters *do* have one.
 
 Both rules visit the same assignment nodes; the split is purely the assignment
 target's shape. A bare identifier target is this rule's; a member/index chain is
-the other's. Neither can report the same line as the other.
+the other's. Neither can report the same *assignment target* as the other —
+though one line can carry both, since it can carry two writes:
+`function f({ b, c }) { b = 1; c.token = 2; }` is one finding from each.
 
 ---
 

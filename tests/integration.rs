@@ -811,6 +811,63 @@ mod semantic_model {
         }
     }
 
+    /// A constructor's parameters live in `JsConstructorParameters`, a different
+    /// node type from a method's `JsParameters`, so it needs its own handling —
+    /// without it `constructor(props)` bound nothing at all.
+    #[test]
+    fn constructor_parameters_are_bound() {
+        let cases = [
+            (
+                "plain",
+                "class C {\n  constructor(props) { return props; }\n}\n",
+            ),
+            (
+                "destructured",
+                "class C {\n  constructor({ props }) { return props; }\n}\n",
+            ),
+            (
+                "defaulted",
+                "class C {\n  constructor(props = {}) { return props; }\n}\n",
+            ),
+            (
+                "rest",
+                "class C {\n  constructor(...props) { return props; }\n}\n",
+            ),
+        ];
+        for (label, source) in cases {
+            let file = FileContext::parse(source, Path::new("a.js"));
+            let model = file.semantic();
+            let binding = model
+                .resolve(&nth_reference(&file, "props", 0))
+                .unwrap_or_else(|| panic!("{label}: constructor param did not resolve"));
+            assert_eq!(binding.kind, BindingKind::Parameter, "{label}");
+        }
+    }
+
+    #[test]
+    fn a_constructor_parameter_shadows_an_outer_binding() {
+        let file = parse(
+            "const value = 'outer';\nclass C {\n  constructor(value) { return value; }\n}\nvalue;\n",
+        );
+        let model = file.semantic();
+        assert_eq!(
+            model
+                .resolve(&nth_reference(&file, "value", 0))
+                .unwrap()
+                .kind,
+            BindingKind::Parameter,
+            "inside the constructor"
+        );
+        assert_eq!(
+            model
+                .resolve(&nth_reference(&file, "value", 1))
+                .unwrap()
+                .kind,
+            BindingKind::Const,
+            "after the class"
+        );
+    }
+
     /// A computed member name is an expression evaluated in the *enclosing*
     /// scope, before the member's own scope exists. Regression test: when
     /// callable members gained their own scope handling, they stopped falling
@@ -1391,6 +1448,38 @@ mod destructure_param_prop_assign {
         assert!(violations.is_empty());
     }
 
+    /// A parenthesized chain starts at `(`, but the diagnostic must still point
+    /// at the parameter the message names.
+    #[test]
+    fn anchors_a_parenthesized_chain_at_the_parameter() {
+        let violations = check_source(
+            RULE,
+            "function f({ state }) {\n  (state.child).value = 1;\n}\n",
+            Path::new("a.js"),
+        );
+        assert_eq!(violations.len(), 1);
+        assert_eq!(
+            (violations[0].line, violations[0].col),
+            (2, 4),
+            "column 4 is `state`; column 3 would be the opening paren"
+        );
+    }
+
+    /// Constructors declare parameters through a different node type than
+    /// methods do, so they need their own coverage.
+    #[test]
+    fn flags_mutation_inside_a_constructor() {
+        let cases = [
+            "class C {\n  constructor({ state }) {\n    state.value = 1;\n  }\n}\n",
+            "class C {\n  constructor({ state = {} }) {\n    state.value = 1;\n  }\n}\n",
+        ];
+        for source in cases {
+            let violations = check_source(RULE, source, Path::new("a.js"));
+            assert_eq!(violations.len(), 1, "not reported in: {source}");
+            assert_eq!(violations[0].line, 3);
+        }
+    }
+
     /// Class and object methods bind their parameters like any other
     /// callable, so a mutation inside one is reported the same way.
     #[test]
@@ -1562,6 +1651,21 @@ mod deep_param_prop_assign {
             Path::new("a.js"),
         );
         assert_eq!(violations.len(), 2);
+    }
+
+    /// Constructor parameters, including a rest parameter, are plain
+    /// parameters for this rule's purposes.
+    #[test]
+    fn flags_deep_writes_through_constructor_parameters() {
+        let cases = [
+            "class C {\n  constructor(acc) {\n    acc.a.b = 1;\n  }\n}\n",
+            "class C {\n  constructor(...rest) {\n    rest[0].a = 1;\n  }\n}\n",
+        ];
+        for source in cases {
+            let violations = check_source(RULE, source, Path::new("a.js"));
+            assert_eq!(violations.len(), 1, "not reported in: {source}");
+            assert_eq!(violations[0].line, 3);
+        }
     }
 
     #[test]

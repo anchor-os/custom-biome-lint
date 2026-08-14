@@ -24,16 +24,17 @@ use std::collections::HashMap;
 
 use biome_js_syntax::{
     AnyJsArrayBindingPatternElement, AnyJsArrowFunctionParameters, AnyJsBinding,
-    AnyJsBindingPattern, AnyJsCombinedSpecifier, AnyJsForInOrOfInitializer, AnyJsForInitializer,
-    AnyJsFormalParameter, AnyJsFunctionBody, AnyJsImportClause, AnyJsNamedImportSpecifier,
-    AnyJsObjectBindingPatternMember, AnyJsParameter, JsArrowFunctionExpression, JsCatchClause,
-    JsClassDeclaration, JsDefaultImportSpecifier, JsForInStatement, JsForOfStatement,
+    AnyJsBindingPattern, AnyJsCombinedSpecifier, AnyJsConstructorParameter,
+    AnyJsForInOrOfInitializer, AnyJsForInitializer, AnyJsFormalParameter, AnyJsFunctionBody,
+    AnyJsImportClause, AnyJsNamedImportSpecifier, AnyJsObjectBindingPatternMember, AnyJsParameter,
+    JsArrowFunctionExpression, JsCatchClause, JsClassDeclaration, JsConstructorClassMember,
+    JsConstructorParameters, JsDefaultImportSpecifier, JsForInStatement, JsForOfStatement,
     JsForStatement, JsForVariableDeclaration, JsFunctionBody, JsFunctionDeclaration,
     JsFunctionExpression, JsGetterClassMember, JsGetterObjectMember, JsIdentifierAssignment,
     JsImport, JsInitializerClause, JsMethodClassMember, JsMethodObjectMember,
     JsNamedImportSpecifiers, JsNamespaceImportSpecifier, JsParameters, JsReferenceIdentifier,
-    JsSetterClassMember, JsSetterObjectMember, JsSwitchStatement, JsSyntaxKind, JsSyntaxNode,
-    JsVariableDeclaration, JsVariableDeclarator,
+    JsRestParameter, JsSetterClassMember, JsSetterObjectMember, JsSwitchStatement, JsSyntaxKind,
+    JsSyntaxNode, JsVariableDeclaration, JsVariableDeclarator,
 };
 use biome_rowan::{AstNode, AstSeparatedList};
 
@@ -46,6 +47,17 @@ pub(super) fn build(root: &JsSyntaxNode) -> SemanticModel {
     let global = builder.push_scope(ScopeKind::Global, None);
     builder.walk(root, global);
     builder.finish(global)
+}
+
+/// How a callable class/object member declares its parameters. Four shapes
+/// around the same binding logic: a getter has none, a method has a
+/// `JsParameters` list, a setter has one unlisted `AnyJsFormalParameter`, and a
+/// constructor has its own `JsConstructorParameters`.
+enum MemberParams<'a> {
+    None,
+    List(&'a JsParameters),
+    Single(&'a AnyJsFormalParameter),
+    Constructor(&'a JsConstructorParameters),
 }
 
 #[derive(Default)]
@@ -171,8 +183,11 @@ impl Builder {
                 if let Some(member) = JsMethodClassMember::cast_ref(node) {
                     self.handle_callable_member(
                         member_name(member.name().ok()),
-                        member.parameters().ok().as_ref(),
-                        None,
+                        member
+                            .parameters()
+                            .ok()
+                            .as_ref()
+                            .map_or(MemberParams::None, MemberParams::List),
                         member.body().ok(),
                         scope,
                     );
@@ -182,8 +197,11 @@ impl Builder {
                 if let Some(member) = JsMethodObjectMember::cast_ref(node) {
                     self.handle_callable_member(
                         member_name(member.name().ok()),
-                        member.parameters().ok().as_ref(),
-                        None,
+                        member
+                            .parameters()
+                            .ok()
+                            .as_ref()
+                            .map_or(MemberParams::None, MemberParams::List),
                         member.body().ok(),
                         scope,
                     );
@@ -196,8 +214,11 @@ impl Builder {
                 if let Some(member) = JsSetterClassMember::cast_ref(node) {
                     self.handle_callable_member(
                         member_name(member.name().ok()),
-                        None,
-                        member.parameter().ok().as_ref(),
+                        member
+                            .parameter()
+                            .ok()
+                            .as_ref()
+                            .map_or(MemberParams::None, MemberParams::Single),
                         member.body().ok(),
                         scope,
                     );
@@ -207,8 +228,11 @@ impl Builder {
                 if let Some(member) = JsSetterObjectMember::cast_ref(node) {
                     self.handle_callable_member(
                         member_name(member.name().ok()),
-                        None,
-                        member.parameter().ok().as_ref(),
+                        member
+                            .parameter()
+                            .ok()
+                            .as_ref()
+                            .map_or(MemberParams::None, MemberParams::Single),
                         member.body().ok(),
                         scope,
                     );
@@ -218,8 +242,7 @@ impl Builder {
                 if let Some(member) = JsGetterClassMember::cast_ref(node) {
                     self.handle_callable_member(
                         member_name(member.name().ok()),
-                        None,
-                        None,
+                        MemberParams::None,
                         member.body().ok(),
                         scope,
                     );
@@ -229,8 +252,25 @@ impl Builder {
                 if let Some(member) = JsGetterObjectMember::cast_ref(node) {
                     self.handle_callable_member(
                         member_name(member.name().ok()),
+                        MemberParams::None,
+                        member.body().ok(),
+                        scope,
+                    );
+                }
+            }
+            // A constructor's parameters live in `JsConstructorParameters`, a
+            // different node type from a method's `JsParameters` (it is the one
+            // that can hold TS parameter properties), so it needs its own arm
+            // rather than sharing the method one.
+            JsSyntaxKind::JS_CONSTRUCTOR_CLASS_MEMBER => {
+                if let Some(member) = JsConstructorClassMember::cast_ref(node) {
+                    self.handle_callable_member(
                         None,
-                        None,
+                        member
+                            .parameters()
+                            .ok()
+                            .as_ref()
+                            .map_or(MemberParams::None, MemberParams::Constructor),
                         member.body().ok(),
                         scope,
                     );
@@ -408,32 +448,32 @@ impl Builder {
     fn bind_parameters(&mut self, params: &JsParameters, scope: ScopeId) {
         for item in params.items().iter().flatten() {
             match item {
-                AnyJsParameter::AnyJsFormalParameter(AnyJsFormalParameter::JsFormalParameter(
-                    param,
-                )) => {
-                    if let Ok(pattern) = param.binding() {
-                        self.collect_pattern_bindings(
-                            &pattern,
-                            BindingKind::Parameter,
-                            scope,
-                            scope,
-                        );
-                    }
-                    self.walk_default(param.initializer(), scope);
+                AnyJsParameter::AnyJsFormalParameter(param) => {
+                    self.bind_formal_parameter(&param, scope)
                 }
-                AnyJsParameter::JsRestParameter(param) => {
-                    if let Ok(pattern) = param.binding() {
-                        self.collect_pattern_bindings(
-                            &pattern,
-                            BindingKind::Parameter,
-                            scope,
-                            scope,
-                        );
-                    }
-                }
-                AnyJsParameter::AnyJsFormalParameter(AnyJsFormalParameter::JsBogusParameter(_))
-                | AnyJsParameter::TsThisParameter(_) => {}
+                AnyJsParameter::JsRestParameter(param) => self.bind_rest_parameter(&param, scope),
+                AnyJsParameter::TsThisParameter(_) => {}
             }
+        }
+    }
+
+    /// One `a`, `{ a }`, or `a = default` parameter, wherever it appears -- a
+    /// parameter list, a setter's single unlisted parameter, or a constructor's
+    /// own parameter list, which are three different node types around the same
+    /// `AnyJsFormalParameter`.
+    fn bind_formal_parameter(&mut self, param: &AnyJsFormalParameter, scope: ScopeId) {
+        let AnyJsFormalParameter::JsFormalParameter(param) = param else {
+            return;
+        };
+        if let Ok(pattern) = param.binding() {
+            self.collect_pattern_bindings(&pattern, BindingKind::Parameter, scope, scope);
+        }
+        self.walk_default(param.initializer(), scope);
+    }
+
+    fn bind_rest_parameter(&mut self, param: &JsRestParameter, scope: ScopeId) {
+        if let Ok(pattern) = param.binding() {
+            self.collect_pattern_bindings(&pattern, BindingKind::Parameter, scope, scope);
         }
     }
 
@@ -530,18 +570,17 @@ impl Builder {
         }
     }
 
-    /// One function scope for a class/object method, getter or setter: its
-    /// parameters (from a `JsParameters` list for a method, or the single
-    /// unlisted `parameter()` for a setter) plus its body.
+    /// One function scope for a callable class/object member -- method,
+    /// constructor, getter or setter -- holding its parameters and body.
     ///
-    /// Deliberately does not bind the member's *name* anywhere — a method name
+    /// Deliberately does not bind the member's *name* anywhere: a method name
     /// is a property of the class or object, not a binding in any lexical
-    /// scope, so there is nothing for an identifier to resolve to.
+    /// scope, so there is nothing for an identifier to resolve to. A *computed*
+    /// name is different -- see the walk of `name` below.
     fn handle_callable_member(
         &mut self,
         name: Option<JsSyntaxNode>,
-        parameters: Option<&JsParameters>,
-        setter_parameter: Option<&AnyJsFormalParameter>,
+        parameters: MemberParams<'_>,
         body: Option<JsFunctionBody>,
         scope: ScopeId,
     ) {
@@ -556,19 +595,27 @@ impl Builder {
         }
 
         let function_scope = self.push_scope(ScopeKind::Function, Some(scope));
-        if let Some(parameters) = parameters {
-            self.bind_parameters(parameters, function_scope);
-        }
-        if let Some(AnyJsFormalParameter::JsFormalParameter(parameter)) = setter_parameter {
-            if let Ok(pattern) = parameter.binding() {
-                self.collect_pattern_bindings(
-                    &pattern,
-                    BindingKind::Parameter,
-                    function_scope,
-                    function_scope,
-                );
+        match parameters {
+            MemberParams::None => {}
+            MemberParams::List(parameters) => self.bind_parameters(parameters, function_scope),
+            MemberParams::Single(parameter) => {
+                self.bind_formal_parameter(parameter, function_scope)
             }
-            self.walk_default(parameter.initializer(), function_scope);
+            MemberParams::Constructor(parameters) => {
+                for parameter in parameters.parameters().iter().flatten() {
+                    match parameter {
+                        AnyJsConstructorParameter::AnyJsFormalParameter(parameter) => {
+                            self.bind_formal_parameter(&parameter, function_scope)
+                        }
+                        AnyJsConstructorParameter::JsRestParameter(parameter) => {
+                            self.bind_rest_parameter(&parameter, function_scope)
+                        }
+                        // `constructor(public x)` is TypeScript-only, and this
+                        // tool analyzes .js/.jsx.
+                        AnyJsConstructorParameter::TsPropertyParameter(_) => {}
+                    }
+                }
+            }
         }
         if let Some(body) = body {
             for statement in body.statements() {

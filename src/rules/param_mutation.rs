@@ -250,10 +250,17 @@ pub fn eligible_member_target(
     eligible(shape).then(|| (member, binding.name.clone()))
 }
 
-/// The byte offset a violation on `target` is reported at: the start of the
-/// whole target, which for a member chain is its root identifier — so the
-/// diagnostic points at the parameter name, matching where Biome's own
-/// `noParameterAssign` anchors its message.
+/// The byte offset a violation on `target` is reported at: its root identifier
+/// for a member chain, so the diagnostic points at the parameter name, matching
+/// where Biome's own `noParameterAssign` anchors its message.
+///
+/// The root is asked for explicitly rather than taken as the target's own start,
+/// because those differ when the chain is parenthesized: `(state.child).value`
+/// starts at `(`, and anchoring there would point the diagnostic at punctuation
+/// instead of the parameter this rule is talking about.
 pub fn report_offset(target: &AnyJsAssignment) -> usize {
-    usize::from(target.syntax().text_trimmed_range().start())
+    MemberTarget::parse(target).map_or_else(
+        || usize::from(target.syntax().text_trimmed_range().start()),
+        |member| usize::from(member.root.syntax().text_trimmed_range().start()),
+    )
 }

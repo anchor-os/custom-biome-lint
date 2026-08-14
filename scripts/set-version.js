@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// Keeps Cargo.toml, package.json, and every npm/<platform>/package.json at
-// the same version for a release. Run before `cargo build --release` and
+// Keeps Cargo.toml, package.json, package-lock.json, and every
+// npm/<platform>/package.json at the same version for a release. Run before `cargo build --release` and
 // before packaging the platform npm packages, so every published artifact
 // (main package, optionalDependencies, platform packages, `--version`
 // output) agrees.
@@ -70,6 +70,30 @@ function preflight(version) {
     writes.push({ filePath: packagePath, contents: `${JSON.stringify(pkg, null, 2)}\n` });
   }
 
+  // package-lock.json records the root version in two places plus its own copy
+  // of optionalDependencies, and `npm ci` fails when those disagree with
+  // package.json. Edited directly rather than regenerated with `npm install
+  // --package-lock-only`, because that resolves every optionalDependency
+  // against the registry and the platform packages for a version being
+  // released do not exist there yet — the release publishes them.
+  const lockPath = path.join(ROOT, 'package-lock.json');
+  if (fs.existsSync(lockPath)) {
+    const lock = readJson(lockPath);
+    const rootEntry = lock.packages && lock.packages[''];
+    if (!rootEntry) {
+      fail('package-lock.json has no packages[""] entry (expected lockfileVersion 2 or 3)');
+    }
+    lock.version = version;
+    rootEntry.version = version;
+    for (const platform of PLATFORMS) {
+      const depName = `custom-biome-lint-${platform}`;
+      if (rootEntry.optionalDependencies && depName in rootEntry.optionalDependencies) {
+        rootEntry.optionalDependencies[depName] = version;
+      }
+    }
+    writes.push({ filePath: lockPath, contents: `${JSON.stringify(lock, null, 2)}\n` });
+  }
+
   // fs.accessSync throws if the path is missing or not writable, catching an
   // unwritable manifest (e.g. read-only file) before any write happens.
   for (const { filePath } of writes) {
@@ -101,7 +125,9 @@ function main() {
     fs.writeFileSync(filePath, contents);
   }
 
-  console.log(`set-version: updated Cargo.toml, package.json, and npm/*/package.json to ${version}`);
+  console.log(
+    `set-version: updated Cargo.toml, package.json, package-lock.json, and npm/*/package.json to ${version}`
+  );
 }
 
 main();

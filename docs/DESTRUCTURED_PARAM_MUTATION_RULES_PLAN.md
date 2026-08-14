@@ -9,7 +9,7 @@ Deviations from the plan as written, all deliberate:
 
 | Plan said | Shipped as | Why |
 | --- | --- | --- |
-| Rule names `destructure-default-param-assign`, `destructure-param-prop-assign` | `destructure-default-param-assign`, `destructure-param-prop-assign` | The `Rule` trait requires kebab-case names (`ADDING_A_RULE.md`); the plan's camelCase spellings were inconsistent with its own rules 3 & 4. |
+| Rule names `destructureDefaultParamAssign`, `destructureParamPropAssign` | `destructure-default-param-assign`, `destructure-param-prop-assign` | The `Rule` trait requires kebab-case names (`ADDING_A_RULE.md`); the plan's camelCase spellings were inconsistent with its own rules 3 & 4. |
 | `RuleRegistry::enabled` filters on `config.severity_override(name).unwrap_or_else(\|\| rule.default_severity())` | `config.severity(name, rule.default_severity())`, a new method | `severity_override` returns `None` for *both* "no entry" and `"off"`, so the plan's expression would have resurrected an explicitly-disabled rule at its default severity. |
 | Rule 3's coverage of bare *reassignment* left "to decide at implementation time" | Not covered | Decided by repro, as the plan asked: Biome 2.5.8 **does** flag `d => { d = 5 }`. Only property mutation is missed, so only property mutation is in scope. |
 | Rule 3 detection by visiting `JsArrowFunctionExpression` nodes and walking their bodies | Uniform assignment-target walk, filtered on the parameter binding's declared shape | Same result with no body-walking special case, and nested-arrow attribution falls out of semantic resolution rather than needing its own handling. |
@@ -466,14 +466,14 @@ item => {
   nesting alone) is what makes this correct — `item` must resolve to the
   outer arrow's parameter regardless of how many arrows separate the mutation
   from the declaration.
-- **Reassignment, not just property mutation** — `item => { item = x; }` (the
-  bare identifier itself, no property access) is arguably *also* invisible to
-  Biome for the same structural reason property mutation is. Decide at
-  implementation time whether Rule 3 should cover bare reassignment too, or
-  whether that's already caught by Biome (worth a direct repro check before
-  writing the fixture, the same way the property-mutation gap was confirmed —
-  don't assume symmetry between reassignment and property-mutation detection
-  without checking).
+- **Reassignment, not just property mutation** — **decided, by repro: Rule 3
+  covers property mutation only.** `item => { item = x; }` (the bare identifier
+  itself, no property access) looks like it should be invisible to Biome for the
+  same structural reason property mutation is, and the plan asked for a direct
+  repro rather than assuming that symmetry. The repro says the symmetry does not
+  hold: Biome 2.5.8 **does** flag bare reassignment, and misses only the property
+  write. So the reassignment case stays out of scope, and asking for the check
+  instead of assuming is what caught it.
 - **This rule + Rule 4 on the same line** — see "Rule 3 / Rule 4 overlap"
   below.
 

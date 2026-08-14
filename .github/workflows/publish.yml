@@ -167,7 +167,10 @@ jobs:
             echo "expected exit code 1 (violations found), got $code"
             exit 1
           fi
-          if ! grep -q "52 errors in 10 files" <<<"$output"; then
+          # Anchored on non-digits at both ends: a plain substring match would
+          # also accept "152 errors in 10 files" or "52 errors in 110 files",
+          # letting the documented counts drift past this gate.
+          if ! grep -Eq '(^|[^0-9])52 errors in 10 files([^0-9]|$)' <<<"$output"; then
             echo "expected fixture summary '52 errors in 10 files':"
             echo "$output" | tail -n 1
             exit 1
