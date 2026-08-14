@@ -20,7 +20,7 @@ pub use scope::{Scope, ScopeId, ScopeKind};
 
 use std::collections::HashMap;
 
-use biome_js_syntax::{JsReferenceIdentifier, JsSyntaxNode};
+use biome_js_syntax::{JsIdentifierAssignment, JsReferenceIdentifier, JsSyntaxNode};
 use biome_rowan::AstNode;
 
 /// The scope tree, declarations, and resolved references for one file.
@@ -59,7 +59,26 @@ impl SemanticModel {
     /// file -- a global/host builtin (`console`, `Math`, ...) or a name
     /// that genuinely isn't declared anywhere this model can see.
     pub fn resolve(&self, identifier: &JsReferenceIdentifier) -> Option<&Binding> {
-        let offset = usize::from(identifier.syntax().text_trimmed_range().start());
+        self.resolve_at(usize::from(
+            identifier.syntax().text_trimmed_range().start(),
+        ))
+    }
+
+    /// The binding an *assignment target* identifier refers to -- the `x` in
+    /// `x = 1`, `x++`, or `for (x of ...)`.
+    ///
+    /// A separate method because Biome models an assignment target as
+    /// [`JsIdentifierAssignment`], a different node type from the
+    /// [`JsReferenceIdentifier`] used in read positions, even though both are
+    /// uses of an existing binding and both resolve the same way.
+    pub fn resolve_assignment(&self, target: &JsIdentifierAssignment) -> Option<&Binding> {
+        self.resolve_at(usize::from(target.syntax().text_trimmed_range().start()))
+    }
+
+    /// Shared lookup behind [`Self::resolve`] and [`Self::resolve_assignment`]:
+    /// resolutions are keyed by the byte offset the identifier starts at, which
+    /// is unique per identifier occurrence in a file.
+    fn resolve_at(&self, offset: usize) -> Option<&Binding> {
         self.resolutions.get(&offset).map(|id| self.binding(*id))
     }
 

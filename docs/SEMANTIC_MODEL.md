@@ -11,16 +11,23 @@ lazily and cached, so a rule that never calls it never pays for it, and a rule
 that does call it shares the same model every other rule that asked for it
 already got.
 
-## Status: backs all three existing rules
+## Status: backs every rule
 
-All three rules resolve the identifiers they care about against this model
-rather than matching by name alone — `no-native-map` for `Map`,
+Every rule resolves the identifiers it cares about against this model rather
+than matching by name alone — `no-native-map` for `Map`,
 `no-arrow-function-create-selector` and `reselect-arity-match` for
 `createSelector` (the latter only for a bare-identifier callee; see "Migrating
 the existing rules" below for why the member-expression form,
-`x.createSelector(...)`, was deliberately left alone). This was not the
-original plan — see that section for why the initial call was to leave the
-rules untouched, and what changed.
+`x.createSelector(...)`, was deliberately left alone), and the four
+parameter-mutation rules for the identifier an assignment target is rooted in.
+For the original three this was not the original plan — see that section for why
+the initial call was to leave them untouched, and what changed.
+
+For the parameter-mutation rules, resolution is not an optimization but a
+correctness requirement: without it, a local variable that happens to share a
+name with a destructured parameter in an enclosing scope would be misclassified
+by name alone, and a mutation several arrow functions away from its parameter's
+declaration would not be attributable at all.
 
 ## What it can answer
 
@@ -51,6 +58,28 @@ scope and returns the *nearest* matching binding — ordinary lexical shadowing.
 A `None` result means the name is unbound in this file: a global/host
 built-in (`console`, `Math`, `window`, ...) or a genuine typo, neither of
 which this model tries to tell apart.
+
+### Assignment targets resolve through a second method
+
+Biome models the identifier being *written to* as `JsIdentifierAssignment`, a
+different node type from the `JsReferenceIdentifier` used in read positions —
+`x` in `x = 1` and `x` in `f(x)` are not the same kind of node. Both are uses of
+an existing binding and both resolve identically, so there is a parallel entry
+point rather than a second mechanism:
+
+```rust
+// The `x` in `x = 1`, `x++`, `for (x of list)`, or `[x] = pair`.
+if let Some(binding) = model.resolve_assignment(&identifier_assignment) {
+    // same Binding, same shadowing rules as `resolve`
+}
+```
+
+Both delegate to one offset-keyed lookup, and the builder records assignment
+targets into the same `pending_refs` list as read references, so the two-pass
+hoisting behaviour described below applies to them too. Without this, an
+assignment target could not be resolved at all — which is what
+`destructure-default-param-assign` needs in order to tell a destructured
+parameter from a same-named local.
 
 ## Scopes and bindings
 

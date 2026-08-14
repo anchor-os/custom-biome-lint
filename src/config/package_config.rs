@@ -123,6 +123,19 @@ impl PackageConfig {
         self.severities.get(rule) == Some(&RuleSeverity::Off)
     }
 
+    /// The severity `rule` actually runs at: its configured entry if it has
+    /// one, otherwise `default` (the rule's own
+    /// [`Rule::default_severity`](crate::rules::Rule::default_severity)).
+    ///
+    /// This is the only correct way to ask "does this rule run at all", because
+    /// [`Self::severity_override`] deliberately collapses "no entry" and
+    /// `"off"` to `None` — a distinction that does not matter when overriding a
+    /// violation's severity, but is the whole question for a rule whose default
+    /// is `Off`.
+    pub fn severity(&self, rule: &str, default: RuleSeverity) -> RuleSeverity {
+        self.severities.get(rule).copied().unwrap_or(default)
+    }
+
     /// The configured `warn`/`error` override for `rule`, or `None` if it has
     /// no entry (keep the rule's default) or is set to `off` (irrelevant,
     /// since an off rule never produces violations to override).
@@ -196,6 +209,44 @@ mod tests {
         let config = PackageConfig::load(tmp.path());
         assert!(!config.is_ignored("no-native-map"));
         assert_eq!(config.severity_override("no-native-map"), None);
+    }
+
+    /// `severity` is the "does this rule run" question, and unlike
+    /// `severity_override` it must keep `"off"` and "no entry" apart — that
+    /// distinction is the whole point for a rule whose default is `Off`.
+    #[test]
+    fn severity_falls_back_to_the_default_only_when_unconfigured() {
+        let tmp = TempDir::new().unwrap();
+        write_package_json(
+            tmp.path(),
+            r#"{
+                "ignoreBiomeExtensionRules": {
+                    "explicitly-off": "off",
+                    "opted-in": "error"
+                }
+            }"#,
+        );
+        let config = PackageConfig::load(tmp.path());
+
+        // Unconfigured: the rule's own default decides, either way.
+        assert_eq!(
+            config.severity("unconfigured", RuleSeverity::Error),
+            RuleSeverity::Error
+        );
+        assert_eq!(
+            config.severity("unconfigured", RuleSeverity::Off),
+            RuleSeverity::Off
+        );
+
+        // Configured: the entry wins over the default, in both directions.
+        assert_eq!(
+            config.severity("explicitly-off", RuleSeverity::Error),
+            RuleSeverity::Off
+        );
+        assert_eq!(
+            config.severity("opted-in", RuleSeverity::Off),
+            RuleSeverity::Error
+        );
     }
 
     #[test]

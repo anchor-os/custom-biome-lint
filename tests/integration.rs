@@ -35,17 +35,39 @@ fn check_one(rule_name: &str, rule_dir: &str, fixture_name: &str) -> Vec<Violati
 }
 
 #[test]
-fn registry_exposes_all_three_rules() {
+fn registry_exposes_every_rule() {
     let registry = RuleRegistry::with_all_rules();
     let mut names: Vec<&str> = registry.all().iter().map(|rule| rule.name()).collect();
     names.sort();
     assert_eq!(
         names,
         vec![
+            "bare-arrow-param-prop-assign",
+            "deep-param-prop-assign",
+            "destructure-default-param-assign",
+            "destructure-param-prop-assign",
             "no-arrow-function-create-selector",
             "no-native-map",
             "reselect-arity-match"
         ]
+    );
+}
+
+/// The two parameter-mutation rules that ship off by default, and the only
+/// rules for which `default_severity` is not `Error`.
+#[test]
+fn only_the_opt_in_rules_default_to_off() {
+    let registry = RuleRegistry::with_all_rules();
+    let mut off: Vec<&str> = registry
+        .all()
+        .iter()
+        .filter(|rule| rule.default_severity() == RuleSeverity::Off)
+        .map(|rule| rule.name())
+        .collect();
+    off.sort();
+    assert_eq!(
+        off,
+        vec!["bare-arrow-param-prop-assign", "deep-param-prop-assign"]
     );
 }
 
@@ -341,11 +363,25 @@ mod reselect_arity_match {
 mod config {
     use super::*;
 
+    /// How many registered rules ship on: everything except the two opt-in
+    /// parameter-mutation rules.
+    fn default_on_count(registry: &RuleRegistry) -> usize {
+        registry
+            .all()
+            .iter()
+            .filter(|rule| rule.default_severity() != RuleSeverity::Off)
+            .count()
+    }
+
     #[test]
-    fn missing_package_json_enables_everything() {
+    fn missing_package_json_enables_every_default_on_rule() {
         let config = PackageConfig::default();
         let registry = RuleRegistry::with_all_rules();
-        assert_eq!(registry.enabled(&config).len(), registry.len());
+        assert_eq!(
+            registry.enabled(&config).len(),
+            default_on_count(&registry),
+            "a rule with no config entry runs at its own default severity"
+        );
     }
 
     #[test]
@@ -361,7 +397,50 @@ mod config {
             .map(|rule| rule.name())
             .collect();
         assert!(!enabled.contains(&"no-native-map"));
-        assert_eq!(enabled.len(), registry.len() - 1);
+        assert_eq!(enabled.len(), default_on_count(&registry) - 1);
+    }
+
+    /// The default-off plumbing, from both sides: an unconfigured opt-in rule
+    /// is absent from `enabled` and present in `ignored`, and a config entry
+    /// flips it.
+    #[test]
+    fn an_opt_in_rule_is_off_until_configured() {
+        let registry = RuleRegistry::with_all_rules();
+        let opt_in = "bare-arrow-param-prop-assign";
+
+        let unconfigured = PackageConfig::default();
+        assert!(!names(registry.enabled(&unconfigured)).contains(&opt_in));
+        assert!(names(registry.ignored(&unconfigured)).contains(&opt_in));
+
+        for level in [RuleSeverity::Error, RuleSeverity::Warn] {
+            let mut config = PackageConfig::default();
+            config.severities.insert(opt_in.to_string(), level);
+            assert!(
+                names(registry.enabled(&config)).contains(&opt_in),
+                "{level:?} must turn the rule on"
+            );
+            assert!(!names(registry.ignored(&config)).contains(&opt_in));
+        }
+    }
+
+    /// Regression guard for the obvious way to get the resolution wrong:
+    /// deriving "does it run" from `severity_override`, which collapses "no
+    /// entry" and `"off"` to `None` and so would resurrect an off rule.
+    #[test]
+    fn an_explicit_off_beats_a_default_on() {
+        let mut config = PackageConfig::default();
+        config
+            .severities
+            .insert("no-native-map".to_string(), RuleSeverity::Off);
+        assert_eq!(config.severity_override("no-native-map"), None);
+        assert_eq!(
+            config.severity("no-native-map", RuleSeverity::Error),
+            RuleSeverity::Off
+        );
+    }
+
+    fn names(rules: Vec<&dyn Rule>) -> Vec<&str> {
+        rules.iter().map(|rule| rule.name()).collect()
     }
 
     #[test]
@@ -411,8 +490,8 @@ mod patterns {
         let discovered = discover_files(&pattern, manifest_dir());
         assert_eq!(
             discovered.files.len(),
-            12,
-            "expected 4 fixtures for each of 3 rules, got {:?}",
+            28,
+            "expected 4 fixtures for each of 7 rules, got {:?}",
             discovered.files
         );
     }
@@ -421,7 +500,7 @@ mod patterns {
     fn explicit_glob_is_passed_through_unchanged() {
         let pattern = resolve_pattern("fixtures/**/invalid.js", manifest_dir(), "js,jsx");
         assert_eq!(pattern.raw(), "fixtures/**/invalid.js");
-        assert_eq!(discover_files(&pattern, manifest_dir()).files.len(), 3);
+        assert_eq!(discover_files(&pattern, manifest_dir()).files.len(), 7);
     }
 
     #[test]
@@ -536,6 +615,52 @@ mod cli_behavior {
             fs::read_to_string(tmpdir.path().join("sample.js")).unwrap(),
             source
         );
+    }
+
+    /// End-to-end proof of the default-off plumbing through the real binary:
+    /// the same file is clean until `package.json` opts the rule in, then
+    /// reports. `bare-arrow-param-prop-assign` is the rule under test; the
+    /// deep-chain rule is left unconfigured so its own default-off keeps it out
+    /// of the count.
+    #[test]
+    fn an_opt_in_rule_reports_only_once_package_json_enables_it() {
+        let tmpdir = TempDir::new().unwrap();
+        fs::write(
+            tmpdir.path().join("sample.js"),
+            "export const f = item => {\n  item.x = 1;\n};\n",
+        )
+        .unwrap();
+
+        let run = |dir: &std::path::Path| -> serde_json::Value {
+            let output = Command::new(env!("CARGO_BIN_EXE_custom-biome-lint"))
+                .arg(".")
+                .arg("--format")
+                .arg("json")
+                .arg("--no-cache")
+                .current_dir(dir)
+                .output()
+                .expect("failed to run custom-biome-lint");
+            serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON")
+        };
+
+        fs::write(tmpdir.path().join("package.json"), "{}").unwrap();
+        let before = run(tmpdir.path());
+        assert_eq!(
+            before["summary"]["clean"], true,
+            "off by default: {before:?}"
+        );
+
+        fs::write(
+            tmpdir.path().join("package.json"),
+            r#"{"ignoreBiomeExtensionRules":{"bare-arrow-param-prop-assign":"error"}}"#,
+        )
+        .unwrap();
+        let after = run(tmpdir.path());
+        assert_eq!(after["summary"]["clean"], false, "opted in: {after:?}");
+        let violations = after["files"][0]["violations"].as_array().unwrap();
+        assert_eq!(violations.len(), 1, "{after:?}");
+        assert_eq!(violations[0]["rule"], "bare-arrow-param-prop-assign");
+        assert_eq!(violations[0]["line"], 2);
     }
 
     #[test]
@@ -941,5 +1066,376 @@ mod semantic_model {
         let function_scope = model.scope(foo_binding.scope);
         assert_eq!(function_scope.kind(), ScopeKind::Function);
         assert_eq!(function_scope.parent(), Some(model.global_scope()));
+    }
+}
+
+mod destructure_default_param_assign {
+    use super::*;
+
+    const RULE: &str = "destructure-default-param-assign";
+    const DIR: &str = "destructure_default_param_assign";
+
+    #[test]
+    fn flags_reassignment_of_a_destructured_parameter() {
+        let violations = check_source(
+            RULE,
+            "function f({ b = '' }) {\n  b = 'x';\n}\n",
+            Path::new("a.js"),
+        );
+        assert_eq!(violations.len(), 1);
+        assert_eq!((violations[0].line, violations[0].col), (2, 3));
+        assert!(
+            violations[0].message.contains(r#""b""#),
+            "the message names the parameter: {}",
+            violations[0].message
+        );
+    }
+
+    /// The boundary that keeps this rule and Biome's own `noParameterAssign`
+    /// from both reporting one line.
+    #[test]
+    fn ignores_plain_parameters() {
+        let violations = check_source(RULE, "function f(a) {\n  a = 5;\n}\n", Path::new("a.js"));
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn ignores_property_mutation() {
+        let violations = check_source(
+            RULE,
+            "function f({ c }) {\n  c.token = 'x';\n}\n",
+            Path::new("a.js"),
+        );
+        assert!(
+            violations.is_empty(),
+            "property mutation belongs to destructure-param-prop-assign"
+        );
+    }
+
+    /// Resolution is by binding, not by name: a local of the same name in a
+    /// nested scope is a different binding entirely.
+    #[test]
+    fn ignores_a_local_shadowing_the_parameter() {
+        let violations = check_source(
+            RULE,
+            "function f({ b }) {\n  {\n    let b = 1;\n    b = 2;\n  }\n}\n",
+            Path::new("a.js"),
+        );
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn flags_nested_and_array_destructuring() {
+        let violations = check_source(
+            RULE,
+            "function f({ outer: { inner } }) {\n  inner = 1;\n}\nfunction g([first]) {\n  first = 2;\n}\n",
+            Path::new("a.js"),
+        );
+        assert_eq!(violations.len(), 2);
+        assert_eq!(violations[0].line, 2);
+        assert_eq!(violations[1].line, 5);
+    }
+
+    #[test]
+    fn flags_compound_update_and_loop_head_reassignment() {
+        let violations = check_source(
+            RULE,
+            "function f({ n }, list) {\n  n += 1;\n  n++;\n  for (n of list) { void n; }\n}\n",
+            Path::new("a.js"),
+        );
+        assert_eq!(violations.len(), 3);
+    }
+
+    #[test]
+    fn respects_suppression() {
+        let violations = check_source(
+            RULE,
+            "function f({ b }) {\n  b = 'x'; // custom-biome-ignore-line destructure-default-param-assign\n}\n",
+            Path::new("a.js"),
+        );
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn fixtures_match_expectations() {
+        assert!(check_one(RULE, DIR, "valid.js").is_empty());
+        assert_eq!(check_one(RULE, DIR, "invalid.js").len(), 5);
+        assert!(check_one(RULE, DIR, "suppressed.js").is_empty());
+        assert_eq!(check_one(RULE, DIR, "edge-cases.js").len(), 17);
+    }
+}
+
+mod destructure_param_prop_assign {
+    use super::*;
+
+    const RULE: &str = "destructure-param-prop-assign";
+    const DIR: &str = "destructure_param_prop_assign";
+
+    #[test]
+    fn flags_property_mutation_of_a_destructured_parameter() {
+        let violations = check_source(
+            RULE,
+            "function f({ c }) {\n  c.token = 'x';\n}\n",
+            Path::new("a.js"),
+        );
+        assert_eq!(violations.len(), 1);
+        assert_eq!((violations[0].line, violations[0].col), (2, 3));
+        assert!(violations[0].message.contains(r#""c""#));
+    }
+
+    /// The headline difference from Biome's own rule, which catches exactly one
+    /// level: all three depths report identically here.
+    #[test]
+    fn is_depth_independent() {
+        let violations = check_source(
+            RULE,
+            "function f({ c, acc, state }, k, id) {\n  c.token = 'x';\n  acc[k].total = 1;\n  state.tours[id].priceBands = {};\n}\n",
+            Path::new("a.js"),
+        );
+        assert_eq!(violations.len(), 3);
+        // Every report anchors on the parameter name, not the deepest property.
+        assert!(violations.iter().all(|v| v.col == 3));
+    }
+
+    #[test]
+    fn ignores_plain_parameters() {
+        let violations = check_source(
+            RULE,
+            "function f(d) {\n  d.token = 'x';\n}\n",
+            Path::new("a.js"),
+        );
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn ignores_reads_and_mutating_method_calls() {
+        let violations = check_source(
+            RULE,
+            "function f({ payload }) {\n  const t = payload.token;\n  payload.items.push(t);\n}\n",
+            Path::new("a.js"),
+        );
+        assert!(violations.is_empty());
+    }
+
+    /// Documented non-goal: an alias's own binding is a `const`, not a
+    /// parameter, so it resolves out of scope. Tracking it would need dataflow
+    /// analysis.
+    #[test]
+    fn ignores_aliased_mutation() {
+        let violations = check_source(
+            RULE,
+            "function f({ payload }) {\n  const local = payload;\n  local.token = 'x';\n}\n",
+            Path::new("a.js"),
+        );
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn respects_suppression() {
+        let violations = check_source(
+            RULE,
+            "function f({ c }) {\n  c.token = 'x'; // custom-biome-ignore-line destructure-param-prop-assign\n}\n",
+            Path::new("a.js"),
+        );
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn fixtures_match_expectations() {
+        assert!(check_one(RULE, DIR, "valid.js").is_empty());
+        assert_eq!(check_one(RULE, DIR, "invalid.js").len(), 5);
+        assert!(check_one(RULE, DIR, "suppressed.js").is_empty());
+        assert_eq!(check_one(RULE, DIR, "edge-cases.js").len(), 14);
+    }
+}
+
+mod bare_arrow_param_prop_assign {
+    use super::*;
+
+    const RULE: &str = "bare-arrow-param-prop-assign";
+    const DIR: &str = "bare_arrow_param_prop_assign";
+
+    #[test]
+    fn flags_mutation_through_an_unparenthesized_single_parameter() {
+        let violations = check_source(
+            RULE,
+            "const f = item => {\n  item.x = 1;\n};\n",
+            Path::new("a.js"),
+        );
+        assert_eq!(violations.len(), 1);
+        assert_eq!((violations[0].line, violations[0].col), (2, 3));
+        assert!(violations[0].message.contains(r#""item""#));
+    }
+
+    /// Every arrow shape Biome's `noParameterAssign` already sees.
+    #[test]
+    fn ignores_parenthesized_and_multi_parameter_forms() {
+        let violations = check_source(
+            RULE,
+            "const a = (d) => { d.token = 'x'; };\nconst b = (x, y) => { x.token = y; };\nfunction c(d) { d.token = 'x'; }\n",
+            Path::new("a.js"),
+        );
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn ignores_destructured_single_parameters() {
+        let violations = check_source(
+            RULE,
+            "const f = ({ c }) => { c.token = 'x'; };\n",
+            Path::new("a.js"),
+        );
+        assert!(
+            violations.is_empty(),
+            "a destructured parameter is destructure-param-prop-assign's territory"
+        );
+    }
+
+    /// Biome *does* flag bare reassignment (verified against 2.5.8), so this
+    /// rule deliberately covers property mutation only.
+    #[test]
+    fn ignores_reassignment_of_the_bare_parameter() {
+        let violations = check_source(
+            RULE,
+            "const f = item => {\n  item = null;\n};\n",
+            Path::new("a.js"),
+        );
+        assert!(violations.is_empty());
+    }
+
+    /// Semantic resolution, not lexical nesting, is what makes this correct:
+    /// the mutation lives inside a different arrow than the one declaring
+    /// `item`.
+    #[test]
+    fn resolves_across_nested_arrows() {
+        let violations = check_source(
+            RULE,
+            "const f = (arr, other) => arr.map(item => other.forEach(x => {\n  item.y = x;\n}));\n",
+            Path::new("a.js"),
+        );
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].line, 2);
+    }
+
+    #[test]
+    fn respects_suppression() {
+        let violations = check_source(
+            RULE,
+            "const f = item => {\n  item.x = 1; // custom-biome-ignore-line bare-arrow-param-prop-assign\n};\n",
+            Path::new("a.js"),
+        );
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn fixtures_match_expectations() {
+        assert!(check_one(RULE, DIR, "valid.js").is_empty());
+        assert_eq!(check_one(RULE, DIR, "invalid.js").len(), 4);
+        assert!(check_one(RULE, DIR, "suppressed.js").is_empty());
+        assert_eq!(check_one(RULE, DIR, "edge-cases.js").len(), 8);
+    }
+}
+
+mod deep_param_prop_assign {
+    use super::*;
+
+    const RULE: &str = "deep-param-prop-assign";
+    const DIR: &str = "deep_param_prop_assign";
+
+    #[test]
+    fn flags_chains_two_or_more_levels_deep() {
+        let violations = check_source(
+            RULE,
+            "function f(accum, id, bands) {\n  accum.tours[id].priceBands = bands;\n}\n",
+            Path::new("a.js"),
+        );
+        assert_eq!(violations.len(), 1);
+        assert_eq!((violations[0].line, violations[0].col), (2, 3));
+        assert!(
+            violations[0].message.contains("accum.tours[id].priceBands"),
+            "the message quotes the chain: {}",
+            violations[0].message
+        );
+    }
+
+    /// The depth floor: depth 1 is `noParameterAssign`'s own territory, so
+    /// re-reporting it here would be duplicate noise.
+    #[test]
+    fn ignores_depth_one() {
+        let violations = check_source(
+            RULE,
+            "function f(acc, x) {\n  acc[x] = 1;\n  acc.token = 'x';\n}\n",
+            Path::new("a.js"),
+        );
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn ignores_a_destructured_root() {
+        let violations = check_source(
+            RULE,
+            "function f({ acc }, x, y) {\n  acc[x][y] = 1;\n}\n",
+            Path::new("a.js"),
+        );
+        assert!(
+            violations.is_empty(),
+            "a destructured root is destructure-param-prop-assign's territory"
+        );
+    }
+
+    /// Arrow-parens style is bare-arrow-param-prop-assign's axis, not this
+    /// rule's: both forms report identically.
+    #[test]
+    fn is_indifferent_to_arrow_parens() {
+        let violations = check_source(
+            RULE,
+            "const a = (acc, x) => { acc.items[x] = 1; };\nconst b = acc => { acc.items.first = 1; };\n",
+            Path::new("a.js"),
+        );
+        assert_eq!(violations.len(), 2);
+    }
+
+    #[test]
+    fn respects_suppression() {
+        let violations = check_source(
+            RULE,
+            "function f(acc, x, y) {\n  acc[x][y] = 1; // custom-biome-ignore-line deep-param-prop-assign\n}\n",
+            Path::new("a.js"),
+        );
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn fixtures_match_expectations() {
+        assert!(check_one(RULE, DIR, "valid.js").is_empty());
+        assert_eq!(check_one(RULE, DIR, "invalid.js").len(), 4);
+        assert!(check_one(RULE, DIR, "suppressed.js").is_empty());
+        assert_eq!(check_one(RULE, DIR, "edge-cases.js").len(), 11);
+    }
+}
+
+/// A bare-single-arrow parameter mutated 2+ levels deep is two independently
+/// true structural facts, and the deliberate decision is that both rules
+/// report it rather than either deferring to the other.
+mod opt_in_rule_overlap {
+    use super::*;
+
+    const SOURCE: &str = "const f = item => {\n  item.a.b = 1;\n};\n";
+
+    #[test]
+    fn both_rules_report_the_same_line() {
+        for rule in ["bare-arrow-param-prop-assign", "deep-param-prop-assign"] {
+            let violations = check_source(rule, SOURCE, Path::new("a.js"));
+            assert_eq!(violations.len(), 1, "{rule} must report");
+            assert_eq!(violations[0].line, 2, "{rule} must report line 2");
+        }
+    }
+
+    #[test]
+    fn one_marker_can_suppress_both() {
+        let source = "const f = item => {\n  // custom-biome-ignore-next-line bare-arrow-param-prop-assign, deep-param-prop-assign\n  item.a.b = 1;\n};\n";
+        for rule in ["bare-arrow-param-prop-assign", "deep-param-prop-assign"] {
+            assert!(check_source(rule, source, Path::new("a.js")).is_empty());
+        }
     }
 }

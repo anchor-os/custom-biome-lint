@@ -17,20 +17,20 @@ Plus a one-off portability check documented at the end.
 cargo test
 ```
 
-Expected: **157 passing, 0 failing**, in four suites.
+Expected: **197 passing, 0 failing**, in four suites.
 
 ```text
 Running unittests src/lib.rs
-running 88 tests
-test result: ok. 88 passed
+running 94 tests
+test result: ok. 94 passed
 
 Running unittests src/bin/custom-biome-lint.rs
 running 0 tests
 test result: ok. 0 passed
 
 Running tests/integration.rs
-running 68 tests
-test result: ok. 68 passed
+running 102 tests
+test result: ok. 102 passed
 
 Doc-tests custom_biome_lint
 running 1 test
@@ -41,7 +41,7 @@ The binary suite reporting 0 tests is expected — `src/bin/custom-biome-lint.rs
 7 lines that delegate to `cli::run()`, so everything is tested through the
 library.
 
-### Unit tests (88, in `src/`)
+### Unit tests (94, in `src/`)
 
 Colocated `#[cfg(test)]` modules testing components in isolation.
 
@@ -51,9 +51,9 @@ Colocated `#[cfg(test)]` modules testing components in isolation.
 | `autofix` | 13 | A single fix applied, a violation with no `Fix` left as skipped rather than dropped, overlapping fixes only applying the first, a fix that would break parsing rejected before writing, invalid fix ranges (reversed, past the end, splitting a UTF-8 code point) rejected without panicking, a file changed on disk since analysis skipped rather than rewritten at stale offsets, atomic writes replacing target content, the original file mode surviving the rename, exclusive temp-file creation refusing a pre-existing symlink, dry run vs write behaviour |
 | `cache` | 9 | Content-hash cache creation, marking/saving, content changes invalidating regardless of mtime, identical content staying valid after a rewrite, cache-key (rule set + version) changes invalidating, disk round-trip, corrupted-cache recovery, old mtime-format entries silently ignored |
 | `cli::args` | 20 | Quiet defaults, repeated `-v`, verbosity saturating at 3, clustered short flags (`-vd`), positional pattern, rejection of unknown flags and duplicate positionals, `--write-fix`/`--auto-fix` defaulting to writing, `--dry-run` requiring one of them, `--write-fix` and `--auto-fix` rejected together, `--format` parsing and its rejection alongside `--write-fix`/`--auto-fix` |
-| `config::package_config` | 7 | Missing `package.json`, legacy array form, object form with `off`/`warn`/`error`, malformed entries warning and being skipped |
+| `config::package_config` | 8 | Missing `package.json`, legacy array form, object form with `off`/`warn`/`error`, malformed entries warning and being skipped, `severity()` falling back to a rule's default only when unconfigured |
 | `diagnostics::formatter` | 7 | JSON output carries every field including `filesCacheSkipped`, omits clean files, is stable for a clean run, the text summary's `, N skipped via cache` clause appears only when nonzero (clean and dirty runs both) |
-| `suppress` | 10 | Same-line and next-line markers, multiple comma-separated rules, `--` justification suffix, block-comment and JSX brace forms, marker inside a string literal being ignored, bare marker suppressing every rule, `append_at` placement for merges |
+| `suppress` | 15 | Same-line and next-line markers, multiple comma-separated rules, `--` justification suffix, block-comment and JSX brace forms, marker inside a string literal being ignored, bare marker suppressing every rule, `append_at` placement for merges |
 | `fixer` | 14 | Trailing vs own-line placement, indentation, several rules sharing one comment, extending an existing comment, justification surviving a merge, JSX brace form on its own line, JSX attributes treated as code, template-literal and parse-error refusals, CRLF and missing-final-newline round-trips, idempotency, the lexer's multi-line and regex-resync behaviour |
 
 Run one group:
@@ -63,7 +63,7 @@ cargo test --lib suppress
 cargo test --lib file_matcher
 ```
 
-### Integration tests (68, in `tests/integration.rs`)
+### Integration tests (102, in `tests/integration.rs`)
 
 These drive the public API — mostly `lint_source`, which runs the full
 parse → check → suppression-filter pipeline, the same path the CLI uses. The
@@ -78,10 +78,15 @@ drives `FileContext::semantic()` directly.
 | `no_arrow_function_create_selector` | 9 | Wrapped `createSelector` reported with a fix attached, direct call and `make*` factory allowed, suppressions work, edge cases flag only the non-factory `make`-prefixed name, an `async` wrapper is reported but left without a fix; an aliased reselect import is recognized; a same-named local function, a `createSelector` from another module, and a shadowing parameter are not treated as reselect |
 | `semantic_model` | 20 | Basic declarations, function parameters, nested-scope shadowing, all four import forms and their source/imported/local fields, a parameter and a local redeclaration each shadowing a same-named import, object/array destructuring (including a computed key as a reference), arrow parameters, block scope, catch scope, a switch statement's cases sharing one block scope, `var` hoisting out of a nested block, a `let` scoped to a `for` loop head, the scope parent-chain hierarchy |
 | `patterns` | 4 | Bare directory expands to a brace glob, bare directory discovers every fixture, explicit glob passed through unchanged, `node_modules` never walked |
-| `cli_behavior` | 5 | `--format json` still emits a document when every rule is disabled; `--auto-fix` unwraps the arrow and relints clean; `--auto-fix --dry-run` leaves the file untouched; `--write-fix` and `--auto-fix` together is rejected; a narrower run over a cache-populated superset finds every file cache-valid (`filesChecked + filesCacheSkipped` accounts for every discovered file) |
-| `config` | 3 | `ignoreBiomeExtensionRules` filters rules out; missing `package.json` enables everything; `warn` severity reports without disabling |
+| `cli_behavior` | 6 | `--format json` still emits a document when every rule is disabled; `--auto-fix` unwraps the arrow and relints clean; `--auto-fix --dry-run` leaves the file untouched; `--write-fix` and `--auto-fix` together is rejected; a narrower run over a cache-populated superset finds every file cache-valid (`filesChecked + filesCacheSkipped` accounts for every discovered file); an opt-in rule reports nothing until `package.json` enables it, then reports (the default-severity plumbing, end to end through the real binary) |
+| `destructure_default_param_assign` | 8 | Destructured-parameter reassignment reported at an asserted line/col with the name in the message; plain parameters and property writes left to their own rules; a shadowing local not reported; nested and array destructuring reported; compound/update/`for-of` reassignment reported; suppressions work; fixture counts pinned |
+| `destructure_param_prop_assign` | 7 | Property mutation of a destructured parameter reported; depth 1/2/3 all reported and all anchored on the parameter name; plain parameters, reads, mutating method calls and aliased mutation not reported; suppressions work; fixture counts pinned |
+| `bare_arrow_param_prop_assign` | 7 | Mutation through an unparenthesized single parameter reported; parenthesized, multi-param, named-function and destructured forms not reported; bare reassignment left to Biome; resolution works across nested arrows; suppressions work; fixture counts pinned |
+| `deep_param_prop_assign` | 6 | Depth-2+ chains reported with the chain quoted in the message; depth 1 and destructured roots not reported; arrow-parens style irrelevant; suppressions work; fixture counts pinned |
+| `opt_in_rule_overlap` | 2 | A bare-arrow parameter mutated 2+ levels deep is reported by *both* opt-in rules on the same line, and one marker naming both suppresses both |
+| `config` | 5 | `ignoreBiomeExtensionRules` filters rules out; missing `package.json` enables every default-on rule; `warn` severity reports without disabling; an opt-in rule is off until configured and appears in `ignored()` until then; an explicit `"off"` beats a rule's default-on (the `severity` vs. `severity_override` distinction) |
 | `extensions` | 1 | An unsupported extension yields no violations |
-| top level | 3 | Registry exposes all three rules; default pattern covers `.js` and `.jsx`; every rule has fixtures for all four cases |
+| top level | 4 | Registry exposes all seven rules; only the two opt-in rules default to off; default pattern covers `.js` and `.jsx`; every rule has fixtures for all four cases |
 
 The four `patterns` tests are regressions for a real bug: the bare-directory
 shorthand was producing `fixtures/**/*.js,jsx` instead of
@@ -158,34 +163,29 @@ cargo build --release
 ./target/release/custom-biome-lint fixtures
 ```
 
-Expected output — **11 errors in 6 files**, exit code 1:
+Expected output — **52 errors in 10 files** out of 28 fixture files, exit code 1
+(abridged; the two opt-in rules are off in this repo, so their fixtures
+contribute nothing here):
 
 ```text
-fixtures/no_arrow_function_create_selector/edge-cases.js
-  20:23  error  Avoid wrapping createSelector in an arrow function for "makeup". ...  no-arrow-function-create-selector
+fixtures/destructure_default_param_assign/edge-cases.js   17 errors
+fixtures/destructure_default_param_assign/invalid.js       5 errors
+fixtures/destructure_param_prop_assign/edge-cases.js      14 errors
+fixtures/destructure_param_prop_assign/invalid.js          5 errors
+fixtures/no_arrow_function_create_selector/edge-cases.js   1 error
+fixtures/no_arrow_function_create_selector/invalid.js      2 errors
+fixtures/no_native_map/edge-cases.js                       2 errors
+fixtures/no_native_map/invalid.js                          2 errors
+fixtures/reselect_arity_match/edge-cases.js                1 error
+fixtures/reselect_arity_match/invalid.js                   3 errors
 
-fixtures/no_arrow_function_create_selector/invalid.js
-  7:35   error  Avoid wrapping createSelector in an arrow function for "selectVisibleUsers". ...  no-arrow-function-create-selector
-  12:32  error  Avoid wrapping createSelector in an arrow function for "selectFirstUser". ...     no-arrow-function-create-selector
-
-fixtures/no_native_map/edge-cases.js
-  4:26   error  Use Immutable.js Map instead of native Map.  no-native-map
-  12:14  error  Use Immutable.js Map instead of native Map.  no-native-map
-
-fixtures/no_native_map/invalid.js
-  3:26  error  Use Immutable.js Map instead of native Map.  no-native-map
-  6:22  error  Use Immutable.js Map instead of native Map.  no-native-map
-
-fixtures/reselect_arity_match/edge-cases.js
-  20:86  error  createSelector expects 2 parameter(s) in the result function, but found 1.  reselect-arity-match
-
-fixtures/reselect_arity_match/invalid.js
-  7:77   error  createSelector expects 2 parameter(s) in the result function, but found 1.  reselect-arity-match
-  10:64  error  createSelector expects 1 parameter(s) in the result function, but found 2.  reselect-arity-match
-  13:76  error  createSelector expects 2 parameter(s) in the result function, but found 1.  reselect-arity-match
-
-✖ 11 errors in 6 files
+✖ 52 errors in 10 files (28 files checked)
 ```
+
+To see the two opt-in rules' fixtures reported, add them to a
+`package.json` in a scratch copy of `fixtures/` — or just run
+`cargo test --test integration bare_arrow` / `deep_param`, which drives each
+named rule directly and pins the same counts.
 
 `invalid.js` and `edge-cases.js` are the only files that ever appear — each
 `edge-cases.js` violation is a pinned, deliberate count for a documented

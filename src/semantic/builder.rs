@@ -27,9 +27,9 @@ use biome_js_syntax::{
     AnyJsObjectBindingPatternMember, AnyJsParameter, JsArrowFunctionExpression, JsCatchClause,
     JsClassDeclaration, JsDefaultImportSpecifier, JsForInStatement, JsForOfStatement,
     JsForStatement, JsForVariableDeclaration, JsFunctionDeclaration, JsFunctionExpression,
-    JsImport, JsInitializerClause, JsNamedImportSpecifiers, JsNamespaceImportSpecifier,
-    JsParameters, JsReferenceIdentifier, JsSwitchStatement, JsSyntaxKind, JsSyntaxNode,
-    JsVariableDeclaration, JsVariableDeclarator,
+    JsIdentifierAssignment, JsImport, JsInitializerClause, JsNamedImportSpecifiers,
+    JsNamespaceImportSpecifier, JsParameters, JsReferenceIdentifier, JsSwitchStatement,
+    JsSyntaxKind, JsSyntaxNode, JsVariableDeclaration, JsVariableDeclarator,
 };
 use biome_rowan::{AstNode, AstSeparatedList};
 
@@ -118,6 +118,16 @@ impl Builder {
                     self.record_reference(&ident, scope);
                 }
             }
+            JsSyntaxKind::JS_IDENTIFIER_ASSIGNMENT => {
+                // An assignment target (`x = 1`, `x++`, `for (x of ...)`) is a
+                // use of an existing binding, not a declaration, but Biome
+                // models it as `JsIdentifierAssignment` rather than
+                // `JsReferenceIdentifier` -- so it needs recording here to be
+                // resolvable at all. See `SemanticModel::resolve_assignment`.
+                if let Some(ident) = JsIdentifierAssignment::cast_ref(node) {
+                    self.record_assignment_target(&ident, scope);
+                }
+            }
             JsSyntaxKind::JS_IMPORT => {
                 if let Some(import) = JsImport::cast_ref(node) {
                     self.handle_import(&import, scope);
@@ -192,6 +202,15 @@ impl Builder {
             return;
         };
         let offset = usize::from(identifier.syntax().text_trimmed_range().start());
+        self.pending_refs
+            .push((offset, scope, token.text_trimmed().to_string()));
+    }
+
+    fn record_assignment_target(&mut self, target: &JsIdentifierAssignment, scope: ScopeId) {
+        let Ok(token) = target.name_token() else {
+            return;
+        };
+        let offset = usize::from(target.syntax().text_trimmed_range().start());
         self.pending_refs
             .push((offset, scope, token.text_trimmed().to_string()));
     }

@@ -149,8 +149,8 @@ jobs:
 
       - name: Smoke test against fixtures (native targets only)
         # fixtures/ deliberately contains violations, so the binary is expected
-        # to exit 1. Also assert the documented fixture contract (11 errors in
-        # 6 files) so the counts cannot silently drift before a publish.
+        # to exit 1. Also assert the documented fixture contract (52 errors in
+        # 10 files) so the counts cannot silently drift before a publish.
         if: matrix.can_run
         shell: bash
         run: |
@@ -167,8 +167,8 @@ jobs:
             echo "expected exit code 1 (violations found), got $code"
             exit 1
           fi
-          if ! grep -q "11 errors in 6 files" <<<"$output"; then
-            echo "expected fixture summary '11 errors in 6 files':"
+          if ! grep -q "52 errors in 10 files" <<<"$output"; then
+            echo "expected fixture summary '52 errors in 10 files':"
             echo "$output" | tail -n 1
             exit 1
           fi

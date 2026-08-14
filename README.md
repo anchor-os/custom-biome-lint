@@ -15,11 +15,23 @@ handles JSX inside `.js` files.
 | `no-native-map` | `new Map()` where Immutable.js `Map` is expected. Understands `import { Map } from 'immutable'`, `import Immutable from 'immutable'`, `require('immutable')`, `const { Map } = Immutable` and `Immutable.Map` aliases. |
 | `no-arrow-function-create-selector` | `createSelector` wrapped in an arrow function, which rebuilds the selector on every call and defeats memoization. Names matching `/^make[A-Z]/` are treated as deliberate factories and allowed. |
 | `reselect-arity-match` | A `createSelector` result function whose parameter count does not match the number of input selectors. |
+| `destructure-default-param-assign` | Reassigning a parameter binding that came from destructuring — `function f({ b }) { b = 'x' }`. Biome's `noParameterAssign` only tracks plain identifier parameters. |
+| `destructure-param-prop-assign` | Mutating a property of a destructured parameter at **any** depth — `({ state }) => { state.tours[id].bands = {} }`. Biome's equivalent check tracks one level. |
+| `bare-arrow-param-prop-assign` **(off by default)** | Property mutation through an arrow's unparenthesized single parameter — `d => { d.token = 'x' }` — an AST shape Biome's `noParameterAssign` does not see. |
+| `deep-param-prop-assign` **(off by default)** | Plain-parameter mutation 2+ levels deep — `function f(acc) { acc[x][y] = 1 }` — past the one level Biome tracks. |
 
-Each rule is a direct port of the corresponding rule in `eslint-rules/`, and the
-ports are deliberately behaviour-for-behaviour rather than "improved", so that
-enabling this tool produces exactly the findings ESLint produced. Full details,
-including one known false-positive class, are in [docs/RULES.md](docs/RULES.md).
+The first three are direct ports of the corresponding rules in `eslint-rules/`,
+deliberately behaviour-for-behaviour rather than "improved", so that enabling
+this tool produces exactly the findings ESLint produced.
+
+The four parameter-mutation rules are not ports: they close measured gaps
+between ESLint's removed `no-param-reassign` and Biome's
+`lint/style/noParameterAssign`, each gap confirmed by direct repro against
+Biome 2.5.8. The two marked off-by-default only run once a repo opts in via
+`ignoreBiomeExtensionRules`.
+
+Full details, including known false positives and non-goals, are in
+[docs/RULES.md](docs/RULES.md).
 
 ## Installation
 
@@ -68,7 +80,7 @@ Rust **is** required for this path. See
 | [docs/MIGRATION_NOTES.md](docs/MIGRATION_NOTES.md) | The 8 suppression comments still to translate |
 | [docs/INCREMENTAL_CACHING_DOCUMENT.md](docs/INCREMENTAL_CACHING_DOCUMENT.md) | How the content-hash cache works, and why it replaced mtime |
 | [docs/BENCHMARKING.md](docs/BENCHMARKING.md) | Re-runnable performance harness (`scripts/benchmark.sh`) and current numbers |
-| [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md) | Lexical scope/binding model and identifier resolution: design, limitations, how the three rules use it |
+| [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md) | Lexical scope/binding model and identifier resolution: design, limitations, how the rules use it |
 | [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) | How the precompiled-binary npm packages work: platform packages, the JS launcher, the release pipeline |
 | [docs/PUBLISH_TO_NPM.md](docs/PUBLISH_TO_NPM.md) | Publishing/version-bump procedure for the main package and the 6 platform packages |
 
