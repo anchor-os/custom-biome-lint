@@ -749,7 +749,7 @@ mod cli_behavior {
 
 mod semantic_model {
     use super::*;
-    use biome_js_syntax::JsReferenceIdentifier;
+    use biome_js_syntax::{JsIdentifierAssignment, JsReferenceIdentifier};
     use biome_rowan::AstNode;
     use custom_biome_lint::{BindingKind, FileContext, ImportedName, ScopeKind};
 
@@ -770,6 +770,349 @@ mod semantic_model {
             })
             .nth(n)
             .unwrap_or_else(|| panic!("no occurrence #{n} of reference `{name}` in source"))
+    }
+
+    /// Whether `name` resolves at all from its `n`th reference — for the cases
+    /// where *not* resolving is the property under test (an identifier that must
+    /// not see a binding it is out of scope for).
+    fn resolves(file: &FileContext<'_>, name: &str, n: usize) -> bool {
+        file.semantic()
+            .resolve(&nth_reference(file, name, n))
+            .is_some()
+    }
+
+    /// The `n`th assignment-target identifier in source order — the `x` in
+    /// `x = 1`, which is a different node type from a read reference.
+    fn nth_assignment_target(file: &FileContext<'_>, n: usize) -> JsIdentifierAssignment {
+        file.tree()
+            .descendants()
+            .filter_map(JsIdentifierAssignment::cast)
+            .nth(n)
+            .unwrap_or_else(|| panic!("no assignment target #{n} in source"))
+    }
+
+    // ---- loops ----
+
+    /// `for-of` and `for-in` have their own builder handlers, distinct from
+    /// `for (;;)`, and only the last of the three was covered.
+    #[test]
+    fn for_of_and_for_in_heads_bind_their_loop_variable() {
+        let cases = [
+            (
+                "for-of",
+                "for (const item of list) {\n  use(item);\n}\n",
+                "item",
+            ),
+            (
+                "for-in",
+                "for (const key in obj) {\n  use(key);\n}\n",
+                "key",
+            ),
+            (
+                "for-of destructured",
+                "for (const { item } of list) {\n  use(item);\n}\n",
+                "item",
+            ),
+        ];
+        for (label, source, name) in cases {
+            let file = FileContext::parse(source, Path::new("a.js"));
+            let model = file.semantic();
+            let binding = model
+                .resolve(&nth_reference(&file, name, 0))
+                .unwrap_or_else(|| panic!("{label}: loop variable did not resolve"));
+            assert_eq!(binding.kind, BindingKind::Const, "{label}");
+            assert_eq!(
+                model.scope(binding.scope).kind(),
+                ScopeKind::Loop,
+                "{label}: must be scoped to the loop head, not the enclosing scope"
+            );
+        }
+    }
+
+    /// The iterated expression is evaluated *before* the loop variable exists,
+    /// so it must be resolved in the enclosing scope. `for (const item of item)`
+    /// is the sharp version: the second `item` must not see the binding the
+    /// loop is about to introduce. The builder does this deliberately; nothing
+    /// asserted it.
+    #[test]
+    fn a_loop_head_expression_cannot_see_the_loop_variable() {
+        let file = parse("for (const item of item) {\n  use(item);\n}\n");
+
+        assert!(
+            !resolves(&file, "item", 0),
+            "the iterated expression must resolve outside the loop scope, \
+             where nothing named `item` is declared"
+        );
+        assert!(
+            resolves(&file, "item", 1),
+            "the body still sees the loop variable"
+        );
+    }
+
+    /// `hoist_target` walks out through Block, Loop *and* Catch scopes. Only the
+    /// block case was covered, so a regression in either of the other two would
+    /// have gone unnoticed.
+    #[test]
+    fn a_var_hoists_out_of_loop_and_catch_scopes_too() {
+        let cases = [
+            (
+                "loop body",
+                "function f(list) {\n  for (const i of list) {\n    var found = i;\n  }\n  return found;\n}\n",
+            ),
+            (
+                "catch body",
+                "function f() {\n  try {\n    risky();\n  } catch (error) {\n    var failed = error;\n  }\n  return failed;\n}\n",
+            ),
+        ];
+        for (label, source) in cases {
+            let file = FileContext::parse(source, Path::new("a.js"));
+            let model = file.semantic();
+            let name = if label == "loop body" {
+                "found"
+            } else {
+                "failed"
+            };
+            let binding = model.resolve(&nth_reference(&file, name, 0)).unwrap();
+            assert_eq!(binding.kind, BindingKind::Var, "{label}");
+            assert_eq!(
+                model.scope(binding.scope).kind(),
+                ScopeKind::Function,
+                "{label}: a var must hoist to the function scope"
+            );
+        }
+    }
+
+    // ---- functions ----
+
+    /// A named function *expression* binds its own name inside its body only —
+    /// unlike a declaration, which binds into the enclosing scope. The builder
+    /// comments on this explicitly; both halves are now asserted.
+    #[test]
+    fn a_named_function_expressions_name_is_visible_only_inside_itself() {
+        let inner = parse("const f = function me() {\n  return me;\n};\n");
+        let binding = inner.semantic().resolve(&nth_reference(&inner, "me", 0));
+        assert_eq!(
+            binding.map(|b| b.kind.clone()),
+            Some(BindingKind::Function),
+            "the body can call itself by name"
+        );
+
+        let outer = parse("const f = function me() {};\nme();\n");
+        assert!(
+            !resolves(&outer, "me", 0),
+            "the enclosing scope must not see a function expression's name"
+        );
+    }
+
+    /// A parameter's default value is an expression in the enclosing scope, and
+    /// a nested arrow inside one has its own parameters.
+    #[test]
+    fn parameter_defaults_resolve_in_the_enclosing_scope() {
+        let file = parse("const fallback = 1;\nfunction f(a = fallback) {\n  return a;\n}\n");
+        assert_eq!(
+            file.semantic()
+                .resolve(&nth_reference(&file, "fallback", 0))
+                .unwrap()
+                .kind,
+            BindingKind::Const
+        );
+
+        // The inner arrow's own `b` wins over anything outside it — the boundary
+        // that keeps a defaulted nested closure's parameters from leaking.
+        let nested = parse("function f(a = (b) => b) {\n  return a;\n}\n");
+        assert_eq!(
+            nested
+                .semantic()
+                .resolve(&nth_reference(&nested, "b", 0))
+                .unwrap()
+                .kind,
+            BindingKind::Parameter
+        );
+    }
+
+    #[test]
+    fn rest_parameters_and_rest_destructuring_bind() {
+        let cases = [
+            (
+                "rest parameter",
+                "function f(...args) {\n  return args;\n}\n",
+                "args",
+            ),
+            (
+                "object rest",
+                "function f({ a, ...rest }) {\n  return rest;\n}\n",
+                "rest",
+            ),
+            (
+                "array rest",
+                "function f([head, ...tail]) {\n  return tail;\n}\n",
+                "tail",
+            ),
+        ];
+        for (label, source, name) in cases {
+            let file = FileContext::parse(source, Path::new("a.js"));
+            let binding = file
+                .semantic()
+                .resolve(&nth_reference(&file, name, 0))
+                .unwrap_or_else(|| panic!("{label}: did not resolve"));
+            assert_eq!(binding.kind, BindingKind::Parameter, "{label}");
+        }
+    }
+
+    /// All three arrow parameter shapes, including the bare single parameter
+    /// that binds with no `JsParameters` node — the shape
+    /// `bare-arrow-param-prop-assign` exists because of.
+    #[test]
+    fn every_arrow_parameter_shape_binds() {
+        let cases = [
+            ("bare single", "const f = value => value;\n"),
+            ("parenthesized single", "const f = (value) => value;\n"),
+            ("multiple", "const f = (value, other) => value + other;\n"),
+            ("destructured", "const f = ({ value }) => value;\n"),
+            ("rest", "const f = (...value) => value;\n"),
+        ];
+        for (label, source) in cases {
+            let file = FileContext::parse(source, Path::new("a.js"));
+            let binding = file
+                .semantic()
+                .resolve(&nth_reference(&file, "value", 0))
+                .unwrap_or_else(|| panic!("{label}: did not resolve"));
+            assert_eq!(binding.kind, BindingKind::Parameter, "{label}");
+        }
+    }
+
+    // ---- scope isolation ----
+
+    /// The other half of giving callable members their own scope: what is
+    /// declared inside one must not escape it. A regression that bound method
+    /// bodies into the enclosing scope would still pass every
+    /// "parameters are bound" test, so this is asserted separately.
+    #[test]
+    fn a_callable_members_body_does_not_leak_into_the_enclosing_scope() {
+        let cases = [
+            (
+                "method local",
+                "class C {\n  m() {\n    const secret = 1;\n    return secret;\n  }\n}\nsecret;\n",
+                "secret",
+            ),
+            (
+                "constructor local",
+                "class C {\n  constructor() {\n    const secret = 1;\n    return secret;\n  }\n}\nsecret;\n",
+                "secret",
+            ),
+            (
+                "object method local",
+                "const o = {\n  m() {\n    const secret = 1;\n    return secret;\n  }\n};\nsecret;\n",
+                "secret",
+            ),
+        ];
+        for (label, source, name) in cases {
+            let file = FileContext::parse(source, Path::new("a.js"));
+            assert!(
+                resolves(&file, name, 0),
+                "{label}: the body's own reference must resolve"
+            );
+            assert!(
+                !resolves(&file, name, 1),
+                "{label}: it must not be visible after the class/object"
+            );
+        }
+    }
+
+    /// Sibling members are separate scopes, not one shared scope.
+    #[test]
+    fn one_members_parameter_is_invisible_to_another() {
+        let file = parse("class C {\n  first(shared) {\n    return shared;\n  }\n  second() {\n    return shared;\n  }\n}\n");
+        assert!(resolves(&file, "shared", 0), "its own method sees it");
+        assert!(
+            !resolves(&file, "shared", 1),
+            "a sibling method must not see another's parameter"
+        );
+    }
+
+    // ---- cross-construct ----
+
+    /// Resolution is by binding, not lexical proximity: an arrow nested inside a
+    /// method still resolves to the method's parameter.
+    #[test]
+    fn an_arrow_inside_a_method_resolves_to_the_methods_parameter() {
+        let file = parse(
+            "class C {\n  m(items) {\n    return items.map(x => items.indexOf(x));\n  }\n}\n",
+        );
+        let model = file.semantic();
+        for n in [0, 1] {
+            assert_eq!(
+                model
+                    .resolve(&nth_reference(&file, "items", n))
+                    .unwrap()
+                    .kind,
+                BindingKind::Parameter,
+                "occurrence {n} (inside the arrow for n=1) resolves to the method parameter"
+            );
+        }
+    }
+
+    /// Assignment targets resolve inside every construct that owns a scope, not
+    /// just at the top level — the property all four parameter-mutation rules
+    /// depend on.
+    #[test]
+    fn assignment_targets_resolve_inside_methods_and_loops() {
+        let cases = [
+            ("method", "class C {\n  m(p) {\n    p = 1;\n  }\n}\n"),
+            (
+                "constructor",
+                "class C {\n  constructor(p) {\n    p = 1;\n  }\n}\n",
+            ),
+            ("setter", "class C {\n  set v(p) {\n    p = 1;\n  }\n}\n"),
+            (
+                "loop body",
+                "function f(p, list) {\n  for (const i of list) {\n    p = i;\n  }\n}\n",
+            ),
+            (
+                "catch body",
+                "function f(p) {\n  try {\n    risky();\n  } catch (e) {\n    p = e;\n  }\n}\n",
+            ),
+        ];
+        for (label, source) in cases {
+            let file = FileContext::parse(source, Path::new("a.js"));
+            let target = nth_assignment_target(&file, 0);
+            let binding = file
+                .semantic()
+                .resolve_assignment(&target)
+                .unwrap_or_else(|| panic!("{label}: assignment target did not resolve"));
+            assert_eq!(binding.kind, BindingKind::Parameter, "{label}");
+        }
+    }
+
+    /// Documented limitation, pinned so a future change to it is a deliberate
+    /// decision rather than an accident: a class *expression*'s own name is not
+    /// bound anywhere, so a self-reference inside the class body does not
+    /// resolve — unlike the named-function-expression case above, which is.
+    ///
+    /// Not a defect in any rule's behaviour: an unresolved identifier is simply
+    /// not a parameter binding, so the parameter-mutation rules stay quiet
+    /// rather than misfiring. Fixing it properly means introducing a class
+    /// scope, which the builder deliberately does not have (see
+    /// `handle_class_declaration`). See docs/SEMANTIC_MODEL.md.
+    #[test]
+    fn a_class_expressions_own_name_is_a_known_gap() {
+        let file = parse("const C = class Inner {\n  m() {\n    return Inner;\n  }\n};\n");
+        assert!(
+            !resolves(&file, "Inner", 0),
+            "if this now resolves, the model gained class-expression scoping — \
+             update this test and SEMANTIC_MODEL.md's limitations rather than deleting it"
+        );
+
+        // The class *declaration* form does bind its name, for contrast.
+        let declared = parse("class Named {}\nNamed;\n");
+        assert_eq!(
+            declared
+                .semantic()
+                .resolve(&nth_reference(&declared, "Named", 0))
+                .unwrap()
+                .kind,
+            BindingKind::Class
+        );
     }
 
     /// Class and object methods, and setters, each own a function scope
@@ -939,8 +1282,6 @@ mod semantic_model {
     /// same shadowing rules as a read reference.
     #[test]
     fn assignment_targets_resolve_to_their_binding() {
-        use biome_js_syntax::JsIdentifierAssignment;
-
         let file =
             parse("function f({ b }) {\n  b = 1;\n  {\n    let b = 2;\n    b = 3;\n  }\n}\n");
         let model = file.semantic();

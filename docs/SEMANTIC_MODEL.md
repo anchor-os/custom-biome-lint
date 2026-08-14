@@ -152,6 +152,21 @@ If a change to this model starts requiring any of the above, that's a signal
 to stop and simplify back to lexical scope/binding tracking, not to keep
 building.
 
+### Known gap: a class expression's own name
+
+`const C = class Inner { m() { return Inner; } }` — the `Inner` reference does
+not resolve. In real JS a named class expression binds its own name inside the
+class body, the same way a named *function* expression does (which this model
+handles). Classes are treated lightly on purpose: there is no class scope at all
+(see `handle_class_declaration`), and adding one just for this would be the
+first step toward class-member analysis this model deliberately avoids.
+
+It is a gap rather than a defect in any rule: an unresolved identifier is not a
+parameter binding, so the parameter-mutation rules stay quiet rather than
+misfiring on it. Pinned by
+`semantic_model::a_class_expressions_own_name_is_a_known_gap` so that closing it
+later is a deliberate decision, not an accident.
+
 ## Migrating the existing rules
 
 When this semantic model first landed, none of the three existing rules were
