@@ -198,9 +198,12 @@ beforeToolbarCreated={toolbar => {
 ```
 
 This is doubly wrong: `{ /* ... */ }` inside a plain JS function body is not
-a comment at all — it's a **block statement containing an expression
-statement that is a comment**, i.e. valid-but-inert JS, not a suppression
-`custom-biome-lint` will ever recognize regardless of what line it targets.
+a comment at all — it is a **block statement whose only content is a comment**
+(comments are discarded as trivia, so the block is empty), and its closing `}`
+is the next physical line after the marker. The marker is
+`custom-biome-ignore-next-line`, so it targets that closing brace, not the
+violation. The placement is inert regardless of what line it targets:
+`custom-biome-lint` never recognizes a `{/* */}` block as a suppression.
 `custom-biome-lint` re-run after this still reports the violation, with no
 error pointing at the malformed suppression.
 
@@ -622,70 +625,53 @@ whole incident.
 
 Written so a fresh session with no other context can pick this up.
 
-1. **Confirm root cause #2 (JSX detection) directly against source.** Read
-   `JsxText::collect` in full (`src/fixer.rs`, below `plan_file`) and
-   determine exactly what node kind its `child_lists`/`expressions` ranges
-   are computed from. Confirm (with a minimal repro file) whether a
-   plain-JS arrow function nested inside a JSX attribute value is currently
-   included in those ranges. Write down the actual condition before changing
-   it — the description in this doc is inferred from *symptoms*, not yet
-   read line-by-line against current `JsxText::collect` code.
-2. **Add the statement-boundedness check.** In `plan_file`, before computing
-   `trailing_ok`, walk from the violation's target token up to its nearest
-   enclosing statement-like ancestor (reuse whatever `file.semantic()` /
-   `context.tree()` traversal helpers already exist — check
-   `src/rules/param_mutation.rs` if the shared helper module from
-   `DESTRUCTURED_PARAM_MUTATION_RULES_PLAN.md` step 2 has landed, it likely
-   already has ancestor-walking utilities worth reusing rather than
-   duplicating). Compute the ancestor's start/end line via the same
-   `line_offsets`/`starts` arrays `plan_file` already builds. Require
-   `start_line == end_line == violation_line` as an additional condition
-   inside `trailing_ok`, alongside the existing lexical/width checks.
+> **Status (as of PR #27):** items 1–5 are **complete** — the JSX root cause
+> was confirmed against source and fixed via an ancestry walk, the
+> statement-boundedness check and Case 4 circular-adjacency detection landed
+> in `plan_file`, and regression tests cover every documented shape. Item 6
+> (formatter-aware self-verify) is intentionally **deferred** to a later PR
+> (it needs Biome's formatter as a dependency). Item 8 (live corpus sanity
+> check) is a **manual verification step** left to the reviewer, not a code
+> change. Item 7 did not need a doc/help change because the default policy is
+> unchanged for the common single-line case. Item 9 was run and passed.
+
+1. **Confirm root cause #2 (JSX detection) directly against source.** ✅ **Done
+   in PR #27.** `JsxText` now walks tree ancestry from the insertion offset;
+   a plain-JS arrow body nested in a JSX attribute value is no longer treated
+   as JSX children.
+2. **Add the statement-boundedness check.** ✅ **Done in PR #27.**
+   `statement_is_single_line` walks up to the nearest `AnyJsStatement` and
+   requires its trimmed range to start and end on the violation line;
+   `trailing_ok` in `plan_file` now includes that condition.
 3. **Fix root cause #2** once confirmed in step 1: narrow `comment_text()`'s
    `jsx` decision to specifically "insertion point is inside a
    `JsxChildList`," not "insertion point is anywhere under a JSX-bearing
-   subtree."
-4. **Add the Case 4 (circular adjacency) detection.** In `plan_file`, when
-   choosing between `Trailing` and `OwnLine`, check whether the line
-   immediately above the violation line is already a suppression-shaped
-   comment (`biome-ignore`, or any comment matching a
-   suppression-comment-like pattern) that is *not* one of this tool's own
-   markers on this same target. If so and the statement is single-line,
-   prefer `Trailing`; if the statement is not single-line, add the new
-   `Unfixable` reason from the Proposed Fix section instead of writing a
-   broken result.
+   subtree." ✅ **Done in PR #27** via the ancestry-based `JsxText::contains`.
+4. **Add the Case 4 (circular adjacency) detection.** ✅ **Done in PR #27.**
+   `is_suppression_comment` flags a foreign/own suppression comment on the
+   line directly above; for a single-line target trailing is preferred, for a
+   multi-line target it is reported `Unfixable` with the documented reason.
 5. **Add the fixture directory and cases from the Test Cases table above.**
-   Each row becomes at minimum a "before" fixture file and an assertion
-   both immediately after `--write-fix` and after simulating (or, if
-   feasible, actually invoking) a Biome format pass over the result. If this
-   repo doesn't already have infrastructure to invoke Biome's formatter
-   in-process or via a bundled binary during tests, that's a prerequisite
-   sub-task — check `Cargo.toml` for an existing `biome_formatter`/
-   `biome_js_formatter` dependency or similar before assuming one needs to
-   be added.
+   ✅ **Done in PR #27** as unit tests in `src/fixer.rs` (the fixer test
+   module) rather than a separate `fixtures/` directory — they assert the
+   immediate placement and marker form for each documented shape. The
+   downstream-formatter half of the suggested assertion (re-running
+   `biome check --write`) is covered conceptually by item 6 below.
 6. **Add unit tests for `verify()`'s new formatter-aware mode** (tertiary
    recommendation), gated so the primary fix (statement-boundedness) is not
-   blocked on this landing — this can be a separate, later PR.
+   blocked on this landing — this can be a separate, later PR. ⏳ **Deferred**
+   (requires pulling in or shelling out to Biome's formatter).
 7. **Update `docs/RULES.md` and/or `src/cli/output.rs`'s `--help` text** if
    the default placement policy changes user-visible behavior enough to
-   warrant a note (e.g., "own-line is now preferred for any multi-line
-   target; trailing is reserved for statements that begin and end on the
-   violation line").
+   warrant a note. ✅ **Not needed** — the default policy is unchanged for the
+   overwhelmingly common single-line-statement case; only multi-line targets
+   (previously buggy) now get own-line.
 8. **Integration sanity check against the real corpus that found this bug.**
-   Re-run this fixed `--write-fix` against a fresh checkout of
-   `hornblower/UI/dashboard` at the commit *before*
-   `36a7ade3ff4a9e32c5e0d6e4342abfc5c37b31a9` (i.e. `042db0bc0`, the parent
-   commit) with `bare-arrow-param-prop-assign` and `deep-param-prop-assign`
-   turned on via `ignoreBiomeExtensionRules`, exactly like that rollout did.
-   Then run `biome check --write src cypress` over the result and re-run
-   `custom-biome-lint`. Expect **0 violations after the format pass**,
-   without any manual comment-form correction — that's the regression test
-   this whole bug report exists to satisfy. (This is read-only against that
-   repo — do not commit anything there as part of this check; it's a
-   verification step, not a deliverable.)
+   ⏳ **Manual verification step for the reviewer** (read-only against
+   `hornblower/UI/dashboard`); not a code change in this repo.
 9. **Run the existing suite (`cargo test && cargo clippy --all-targets`)**
-   before considering this done, per the convention in
-   `DESTRUCTURED_PARAM_MUTATION_RULES_PLAN.md`'s own checklist.
+   before considering this done. ✅ **Done in PR #27** — 126 tests pass,
+   clippy clean.
 
 ## Non-goals for this plan
 

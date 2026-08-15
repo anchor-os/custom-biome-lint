@@ -534,9 +534,19 @@ fn is_suppression_comment(line: &str) -> bool {
         return false;
     };
     let rest = rest.trim_start();
-    rest.starts_with("biome-ignore")
-        || rest.starts_with("eslint-disable")
-        || rest.starts_with("custom-biome-ignore")
+    for prefix in ["biome-ignore", "eslint-disable", "custom-biome-ignore"] {
+        if let Some(after) = rest.strip_prefix(prefix) {
+            // Require a word boundary after the prefix so near-misses such as
+            // `eslint-disablement` are not mistaken for a suppression comment.
+            // A delimiter (`-` for the `-line`/`-next-line` variants, `:` or
+            // whitespace for the others) or end-of-comment is expected.
+            match after.chars().next() {
+                None | Some(' ') | Some('\t') | Some(':') | Some('-') => return true,
+                _ => {}
+            }
+        }
+    }
+    false
 }
 
 /// Splits into `(content, line ending)` pairs, numbered like `str::lines`, so
@@ -900,6 +910,20 @@ mod tests {
             plan.unfixable[0].reason,
             "leading line already claimed by another tool's suppression comment and target spans multiple lines"
         );
+    }
+
+    #[test]
+    fn near_miss_suppression_comment_is_not_treated_as_foreign() {
+        // `eslint-disablement` is a near-miss of `eslint-disable`; it must not
+        // be mistaken for a foreign suppression comment, so a multi-line target
+        // below it is still fixed with an own-line marker rather than reported
+        // unfixable.
+        let source =
+            "// eslint-disablement some-other-thing\naccum.stackedData[valKey] = {\n  y: 1,\n};\n";
+        let plan = plan(source, &[(2, "deep-param-prop-assign")]);
+        assert!(plan.unfixable.is_empty());
+        assert_eq!(plan.changes.len(), 1);
+        assert_eq!(plan.changes[0].placement, Placement::OwnLine);
     }
 
     #[test]
