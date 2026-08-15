@@ -133,6 +133,10 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    use crate::semantic::BindingKind;
+    use biome_js_syntax::JsReferenceIdentifier;
+    use biome_rowan::AstNode;
+
     /// Cypress step definitions use `$`-prefixed identifiers (the `$el`
     /// convention for aliased subjects, e.g. `cy.then(($el) => { ... })`).
     /// Biome < 1.0 rejected these as identifiers, which made every such file
@@ -146,11 +150,48 @@ mod tests {
             "expected $-prefixed identifiers (Cypress $el) to parse cleanly"
         );
 
-        let src2 = "const $a = 1;\nconst f = ($el) => $el + 1;\n";
+        // The `$el` *use* must resolve to its arrow parameter binding, not leak
+        // to a global — otherwise rules that read the semantic model would
+        // mis-handle Cypress step definitions.
+        let binding = ctx
+            .semantic()
+            .resolve(&find_reference(&ctx, "$el", 0))
+            .unwrap_or_else(|| {
+                panic!("expected `$el` reference to resolve to its arrow parameter")
+            });
+        assert_eq!(binding.name, "$el");
+        assert_eq!(binding.kind, BindingKind::Parameter);
+
+        let src2 = "const f = ($el) => $el + 1;\n";
         let ctx2 = FileContext::parse(src2, Path::new("a.js"));
         assert!(
             ctx2.parsed_cleanly(),
             "expected $-prefixed identifiers to parse cleanly"
         );
+
+        let binding2 = ctx2
+            .semantic()
+            .resolve(&find_reference(&ctx2, "$el", 0))
+            .unwrap_or_else(|| {
+                panic!("expected `$el` reference to resolve to its arrow parameter")
+            });
+        assert_eq!(binding2.name, "$el");
+        assert_eq!(binding2.kind, BindingKind::Parameter);
+    }
+
+    /// The `n`th (0-based, source order) *use* of `name` — a
+    /// `JsReferenceIdentifier`, not a declaration — mirroring the resolution
+    /// helpers in `tests/integration.rs`.
+    fn find_reference(ctx: &FileContext<'_>, name: &str, n: usize) -> JsReferenceIdentifier {
+        ctx.tree()
+            .descendants()
+            .filter_map(JsReferenceIdentifier::cast)
+            .filter(|ident| {
+                ident
+                    .value_token()
+                    .is_ok_and(|token| token.text_trimmed() == name)
+            })
+            .nth(n)
+            .unwrap_or_else(|| panic!("no occurrence #{n} of reference `{name}`"))
     }
 }
