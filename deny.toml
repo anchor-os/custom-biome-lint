@@ -7,11 +7,14 @@ all-features = false
 no-default-features = false
 
 [advisories]
-# Mirrors .cargo/audit.toml: proc-macro-error is unmaintained, but it is a
-# build-time-only proc-macro dependency pulled in transitively by Biome
-# crates pinned to =0.5.7 (see Cargo.toml), with no upstream fix available.
+# Mirrors .cargo/audit.toml. Biome's proc-macro crates (biome_deserialize_macros,
+# biome_diagnostics_macros, biome_markup, biome_console) transitively pull in
+# proc-macro-error2, which is unmaintained with no safe upgrade (RUSTSEC-2026-0173).
+# It is build-time-only (a proc-macro), so it never ships in the compiled binary.
+# Biome itself is pinned to a git rev (see Cargo.toml), so the only fix is an
+# upstream Biome release that drops proc-macro-error2.
 ignore = [
-    { id = "RUSTSEC-2024-0370", reason = "unmaintained proc-macro-error, build-time-only, transitive via biome_* pinned to =0.5.7 — see .cargo/audit.toml" },
+    { id = "RUSTSEC-2026-0173", reason = "unmaintained proc-macro-error2, build-time-only proc-macro, transitive via biome_* — no safe upgrade available" },
 ]
 
 [licenses]
@@ -27,6 +30,8 @@ allow = [
     "MIT-0",
     "Zlib",
     "Unlicense",
+    # MPL-2.0: option-ext + uluru, new transitive deps introduced by Biome 2.5.8
+    "MPL-2.0",
 ]
 confidence-threshold = 0.8
 
@@ -45,3 +50,6 @@ wildcards = "deny"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Biome is consumed as a git dependency (see Cargo.toml); allow this one git
+# source so the supply-chain check knows it's an expected, reviewed source.
+allow-git = ["https://github.com/biomejs/biome"]
