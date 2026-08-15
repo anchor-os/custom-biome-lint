@@ -8,27 +8,41 @@ migration.
 Written in Rust on Biome's own JS parser, so it sees the same AST Biome does and
 handles JSX inside `.js` files.
 
+The tool is fully standalone and project-agnostic: it is published to npm as a
+public package that **any** JavaScript/JSX project can adopt. The example file
+paths shown throughout this README (e.g. `src/components/...`,
+`src/selectors/...`) are illustrative only.
+
 ## Rules
 
-| Rule | What it catches |
-| --- | --- |
-| `no-native-map` | `new Map()` where Immutable.js `Map` is expected. Understands `import { Map } from 'immutable'`, `import Immutable from 'immutable'`, `require('immutable')`, `const { Map } = Immutable` and `Immutable.Map` aliases. |
-| `no-arrow-function-create-selector` | `createSelector` wrapped in an arrow function, which rebuilds the selector on every call and defeats memoization. Names matching `/^make[A-Z]/` are treated as deliberate factories and allowed. |
-| `reselect-arity-match` | A `createSelector` result function whose parameter count does not match the number of input selectors. |
-| `destructure-default-param-assign` | Reassigning a parameter binding that came from destructuring — `function f({ b }) { b = 'x' }`. Biome's `noParameterAssign` only tracks plain identifier parameters. |
-| `destructure-param-prop-assign` | Mutating a property of a destructured parameter at **any** depth — `({ state }) => { state.tours[id].bands = {} }`. Biome's equivalent check tracks one level. |
-| `bare-arrow-param-prop-assign` **(off by default)** | Property mutation through an arrow's unparenthesized single parameter — `d => { d.token = 'x' }` — an AST shape Biome's `noParameterAssign` does not see. |
-| `deep-param-prop-assign` **(off by default)** | Plain-parameter mutation 2+ levels deep — `function f(acc) { acc[x][y] = 1 }` — beyond Biome's one-level limit. |
+Every rule is enabled and reports at `error` severity by default **except** the
+six marked **off by default** — those encode a house style (banning loops, deep
+parameter mutation) rather than a universal correctness fix, so a repo must opt
+in. See [Configuration](#configuration) for how to flip any rule's state or
+severity.
 
-The first three are direct ports of the corresponding rules in `eslint-rules/`,
-deliberately behaviour-for-behaviour rather than "improved", so that enabling
-this tool produces exactly the findings ESLint produced.
+| Rule | Default | What it catches |
+| --- | --- | --- |
+| `no-native-map` | on | `new Map()` where Immutable.js `Map` is expected. Understands `import { Map } from 'immutable'`, `import Immutable from 'immutable'`, `require('immutable')`, `const { Map } = Immutable` and `Immutable.Map` aliases. |
+| `no-arrow-function-create-selector` | on | `createSelector` wrapped in an arrow function, which rebuilds the selector on every call and defeats memoization. Names matching `/^make[A-Z]/` are treated as deliberate factories and allowed. |
+| `reselect-arity-match` | on | A `createSelector` result function whose parameter count does not match the number of input selectors. |
+| `destructure-default-param-assign` | on | Reassigning a parameter binding that came from destructuring — `function f({ b }) { b = 'x' }`. Biome's `noParameterAssign` only tracks plain identifier parameters. |
+| `destructure-param-prop-assign` | on | Mutating a property of a destructured parameter at **any** depth — `({ state }) => { state.tours[id].bands = {} }`. Biome's equivalent check tracks one level. |
+| `bare-arrow-param-prop-assign` | **off** | Property mutation through an arrow's unparenthesized single parameter — `d => { d.token = 'x' }` — an AST shape Biome's `noParameterAssign` does not see. |
+| `deep-param-prop-assign` | **off** | Plain-parameter mutation 2+ levels deep — `function f(acc) { acc[x][y] = 1 }` — beyond Biome's one-level limit. |
+| `no-for-statement` | **off** | Classic three-clause `for (init; test; update) { ... }` loops. Part of the "no loops, use functional iteration" house style; `for...of` / `for...in` are out of scope. |
+| `no-while-statement` | **off** | `while (...) { ... }` loops. Same house style as the loop bans. |
+| `no-do-while-statement` | **off** | `do { ... } while (...) ` loops. Same house style as the loop bans. |
+| `param-mutating-array-method-call` | **off** | Array-mutating method calls (`push`, `pop`, `shift`, `unshift`, `splice`, `sort`, `reverse`, `fill`, `copyWithin`) on a parameter — `param.push(item)`. Name-based; companion to the parameter-mutation rules. |
 
-The four parameter-mutation rules are not ports: they close measured gaps
-between ESLint's removed `no-param-reassign` and Biome's
-`lint/style/noParameterAssign`, each gap confirmed by direct repro against
-Biome 2.5.8. The two marked off-by-default only run once a repo opts in via
-`ignoreBiomeExtensionRules`.
+The first three `on` rules are direct ports of the corresponding rules in
+`eslint-rules/`, deliberately behaviour-for-behaviour rather than "improved",
+so that enabling this tool produces exactly the findings ESLint produced.
+
+The parameter-mutation and loop-ban rules are not ports: they close measured
+gaps between ESLint's removed `no-param-reassign` / `no-restricted-syntax` and
+Biome's built-in checks. The six marked off-by-default only run once a repo
+opts in via `ignoreBiomeExtensionRules`.
 
 Full details, including known false positives and non-goals, are in
 [docs/RULES.md](docs/RULES.md).
@@ -431,11 +445,11 @@ than pulled from a crate, and nothing reads from the surrounding repository
 except the `package.json` it discovers at runtime. The directory can be moved to
 its own repository, published to npm, or used as a git submodule without edits.
 
-The Biome crates are pinned to exactly `0.5.7`, and `biome_parser`,
-`biome_diagnostics` and `biome_console` are declared as direct dependencies
-without being imported purely to hold the graph at that version. **Do not remove
-them or loosen the pins** — see
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#decision-pinning-all-six-biome-crates-to-057).
+The Biome crates are consumed from a **git pin of Biome 2.5.8** (see
+`Cargo.toml`). The standalone `biome_*` crates on crates.io are frozen at
+`0.5.7`, which cannot parse `$`-prefixed identifiers (e.g. the Cypress `$el`
+convention), so the monorepo git source is required. **Do not loosen the git
+pin** — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Testing
 
