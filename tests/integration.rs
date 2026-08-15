@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use custom_biome_lint::{lint_source, PackageConfig, Rule, RuleRegistry, RuleSeverity, Violation};
+use custom_biome_lint::{
+    lint_source, PackageConfig, Rule, RuleRegistry, RuleSeverity, Severity, Violation,
+};
 
 fn fixture(rule_dir: &str, name: &str) -> (PathBuf, String) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -381,6 +383,11 @@ mod param_mutating_array_method_call {
         let violations = check_one(RULE, DIR, "invalid.js");
         assert_eq!(violations.len(), 7, "got {violations:?}");
         assert!(violations.iter().all(|v| v.rule == RULE));
+        // High-confidence findings are errors.
+        assert!(
+            violations.iter().all(|v| v.severity == Severity::Error),
+            "high-confidence findings must be errors: {violations:?}"
+        );
         // The original surfaced instance, reported at the parameter use site.
         let first = violations
             .iter()
@@ -425,13 +432,14 @@ mod param_mutating_array_method_call {
     }
 
     /// The immutable.js false-positive risk surfaces as a low-confidence
-    /// annotation, never as suppression.
+    /// warning, never as suppression and never as a plain error.
     #[test]
-    fn immutable_import_marks_low_confidence() {
+    fn immutable_import_is_a_low_confidence_warning() {
         let source =
             "import { Map } from 'immutable';\nfunction f(pricelists, id) {\n  return pricelists.push(Map({ id }));\n}\n";
         let violations = check_source(RULE, source, Path::new("a.js"));
         assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert_eq!(violations[0].severity, Severity::Warning);
         assert!(
             violations[0]
                 .message
@@ -442,13 +450,14 @@ mod param_mutating_array_method_call {
     }
 
     /// An `immutable` package subpath (`immutable/...`) is still the same
-    /// module and must earn the low-confidence marker too.
+    /// module and must earn the low-confidence warning too.
     #[test]
-    fn immutable_subpath_import_marks_low_confidence() {
+    fn immutable_subpath_import_is_a_low_confidence_warning() {
         let source =
             "import { Map } from 'immutable/dist/immutable.es.js';\nfunction f(pricelists, id) {\n  return pricelists.push(Map({ id }));\n}\n";
         let violations = check_source(RULE, source, Path::new("a.js"));
         assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert_eq!(violations[0].severity, Severity::Warning);
         assert!(
             violations[0]
                 .message
@@ -461,10 +470,11 @@ mod param_mutating_array_method_call {
     /// The redux-form `fields` convention is a separate low-confidence signal,
     /// visible even when the file does not import immutable.
     #[test]
-    fn redux_form_fields_name_marks_low_confidence_without_immutable() {
+    fn redux_form_fields_name_is_a_low_confidence_warning() {
         let source = "function f(fields) {\n  fields.push('');\n}\n";
         let violations = check_source(RULE, source, Path::new("a.js"));
         assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert_eq!(violations[0].severity, Severity::Warning);
         assert!(
             violations[0]
                 .message
@@ -474,13 +484,15 @@ mod param_mutating_array_method_call {
         );
     }
 
-    /// A plain-array parameter named `fields` still fires (low confidence is a
-    /// marker, not a gate) — pins the documented edge case.
+    /// A plain-array parameter named `fields` still fires as a low-confidence
+    /// warning (the marker is heuristic, not a gate) — pins the documented edge
+    /// case.
     #[test]
-    fn a_plain_array_fields_parameter_still_fires() {
+    fn a_plain_array_fields_parameter_still_fires_as_a_warning() {
         let source = "function f(fields) {\n  fields.push(1);\n}\n";
         let violations = check_source(RULE, source, Path::new("a.js"));
         assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert_eq!(violations[0].severity, Severity::Warning);
     }
 
     /// Map/Set-shaped method names are excluded from v1 entirely.

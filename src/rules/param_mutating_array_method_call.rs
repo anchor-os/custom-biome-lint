@@ -83,12 +83,22 @@ impl Rule for ParamMutatingArrayMethodCall {
                 file.line_col(usize::from(root.syntax().text_trimmed_range().start()));
 
             let low_confidence = low_confidence_marker(&root, imports_immutable);
-            let message = match low_confidence {
+            let message = match &low_confidence {
                 Some(note) => format!("{MESSAGE} {note}"),
                 None => MESSAGE.to_string(),
             };
 
-            violations.push(Violation::error(self.name(), line, col, message));
+            // High-confidence findings (a known mutating Array API on a
+            // parameter) are errors; low-confidence findings (a known API
+            // collision such as Immutable.js or redux-form's `fields` helper,
+            // where the same method name may be non-mutating) are warnings —
+            // the rule is heuristic and cannot prove the call mutates, but the
+            // call is still worth surfacing.
+            if low_confidence.is_some() {
+                violations.push(Violation::warning(self.name(), line, col, message));
+            } else {
+                violations.push(Violation::error(self.name(), line, col, message));
+            }
         }
 
         violations

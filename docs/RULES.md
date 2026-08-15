@@ -681,6 +681,15 @@ file that imports `immutable` (or a `/immutable`-suffixed subpath such as
 suffix; a finding on a receiver named `fields`/`field` carries a `(low
 confidence: receiver named 'fields' may be a redux-form helper)` suffix.
 
+**Severity:** This rule is heuristic because it does not perform type inference.
+High-confidence findings indicate a method call that matches a known mutating
+Array API on a parameter and report at **error** severity. Low-confidence
+findings indicate a known API collision where the same method name may be
+non-mutating (an `immutable` import or a `fields`/`field` receiver); they keep
+the explanatory suffix and report at **warning** severity instead of
+**error** — still surfaced, but de-prioritized for triage. Both severities are
+capped by the rule's own off-by-default posture.
+
 **Source:** `src/rules/param_mutating_array_method_call.rs`
 
 ### What it catches
@@ -742,12 +751,19 @@ reuse these exact method names:
 
 In scoping against the dashboard corpus, roughly half of the raw mutating-method
 calls on parameters turned out to be one of these two idioms. The rule therefore
-ships **off by default** and, when enabled, attaches a **low-confidence suffix**
-to findings that look like either idiom (an `immutable` import, or a
-`fields`/`field` receiver name). The suffix is a *marker for triage priority*,
-**not** a suppression — the finding still reports, because a name/import
+ships **off by default** and, when enabled, treats the two findings differently:
+
+- **High-confidence findings** — a known mutating Array API on a parameter with
+  no collision signal — report at **error** severity.
+- **Low-confidence findings** — the same call but in a file that imports
+  `immutable` or on a `fields`/`field` receiver — report at **warning** severity
+  and carry the `(low confidence: …)` suffix.
+
+The suffix plus the downgraded severity is a *marker for triage priority*, **not**
+a suppression — the finding still reports, because a name/import
 heuristic is not safe enough to auto-hide a real `productsData.push(product)`-
-shaped bug behind a coincidental variable name.
+shaped bug behind a coincidental variable name. Low-confidence findings surface
+as warnings so they are visible but do not block a build the way an error would.
 
 ### Known non-goals
 
