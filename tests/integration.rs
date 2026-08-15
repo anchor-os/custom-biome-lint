@@ -441,6 +441,23 @@ mod param_mutating_array_method_call {
         );
     }
 
+    /// An `immutable` package subpath (`immutable/...`) is still the same
+    /// module and must earn the low-confidence marker too.
+    #[test]
+    fn immutable_subpath_import_marks_low_confidence() {
+        let source =
+            "import { Map } from 'immutable/dist/immutable.es.js';\nfunction f(pricelists, id) {\n  return pricelists.push(Map({ id }));\n}\n";
+        let violations = check_source(RULE, source, Path::new("a.js"));
+        assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert!(
+            violations[0]
+                .message
+                .contains("low confidence: file imports 'immutable'"),
+            "got {:?}",
+            violations[0].message
+        );
+    }
+
     /// The redux-form `fields` convention is a separate low-confidence signal,
     /// visible even when the file does not import immutable.
     #[test]

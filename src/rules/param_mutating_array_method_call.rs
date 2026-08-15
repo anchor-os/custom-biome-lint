@@ -158,7 +158,7 @@ fn file_imports_immutable(tree: &JsSyntaxNode) -> bool {
             return false;
         };
         let source = source.text();
-        source == "immutable" || source.ends_with("/immutable")
+        source == "immutable" || source.ends_with("/immutable") || source.starts_with("immutable/")
     })
 }
 

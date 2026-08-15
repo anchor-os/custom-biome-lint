@@ -788,7 +788,8 @@ them a severity in `package.json`:
 {
   "ignoreBiomeExtensionRules": {
     "bare-arrow-param-prop-assign": "error",
-    "deep-param-prop-assign": "warn"
+    "deep-param-prop-assign": "warn",
+    "param-mutating-array-method-call": "warn"
   }
 }
 ```

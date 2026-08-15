@@ -1,6 +1,7 @@
 # Plan: a rule for mutating method calls on function parameters
 
-**Status: PROPOSED, not started.** Follows from the `no-param-reassign` audit
+**Status: IMPLEMENTED** (rule `param-mutating-array-method-call`, shipped off by
+default). Follows from the `no-param-reassign` audit
 that produced `DESTRUCTURED_PARAM_MUTATION_RULES_PLAN.md`. That audit's
 final verification pass found 3 remaining uncovered entries; 2 are confirmed
 non-issues (out of scope by design, or a dead comment), and the 3rd —
@@ -498,6 +499,38 @@ tool.
 
 Written so a fresh session with no other context can implement this
 end-to-end.
+
+**Implementation status (completed):** the rule `param-mutating-array-method-call`
+was implemented and merged behind PR #26.
+
+1. ✅ `src/rules/param_mutation.rs` existed; its chain-root walker concept was
+   reimplemented for `CallExpression` chains in the new rule (both shapes — plain
+   and destructured — fire the same rule, so no shape split was needed).
+2. ✅ `src/rules/param_mutating_array_method_call.rs` created; detection matches
+   the sketch (non-computed `JsStaticMemberExpression` callee in the fixed
+   mutating-array-method set, root resolves via `file.semantic()` to a `Parameter`).
+3. ✅ Low-confidence signal implemented as a message suffix — `(low confidence:
+   file imports 'immutable')` (now also covering `immutable/...` subpaths) and
+   `(low confidence: receiver named 'fields' may be a redux-form helper)` — added
+   to the message rather than a new `Violation` field, so the four existing rules'
+   output shape is untouched.
+4. ✅ `default_severity()` returns `RuleSeverity::Off`.
+5. ✅ Fixtures created at
+   `fixtures/param_mutating_array_method_call/{valid,invalid,suppressed,edge-cases}.js`
+   (all 16 test-case rows; edge-cases cover optional chaining, shadowing, and the
+   low-confidence idioms).
+6. ✅ `param_mutating_array_method_call` test module added to `tests/integration.rs`
+   (positive, near-miss, suppression, off-by-default plumbing).
+7. ✅ Registered in `src/rules/mod.rs` and `RuleRegistry::with_all_rules()`;
+   `cargo test && cargo clippy --all-targets` pass.
+8. ✅ `docs/RULES.md` updated with the rule's section (precision tradeoff,
+   low-confidence signal, rollout caveat, non-goals) and the opt-in example.
+9. ⚠️ Not run against the live dashboard corpus (separate repo, not available in
+   this environment). The dashboard tally in `docs/RULES.md` deliberately excludes
+   this rule and points here for its scoping; the ~251 estimate remains the
+   expected ballpark should it be run.
+10. ✅ No automated `--write-fix` rollout built; the rule ships off by default with
+    a documented manual-triage-before-suppression workflow.
 
 1. **Confirm the shared helper module exists.** Check whether
    `src/rules/param_mutation.rs` (proposed in
