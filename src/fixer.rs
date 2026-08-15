@@ -880,10 +880,12 @@ mod tests {
         let plan = plan(source, &[(2, "deep-param-prop-assign")]);
         assert_eq!(plan.changes.len(), 1);
         assert_eq!(plan.changes[0].placement, Placement::Trailing);
+        assert!(plan.source.contains(
+            "accum.stackedData[valKey] = {}; // custom-biome-ignore-line deep-param-prop-assign"
+        ));
         assert!(plan
             .source
-            .contains("accum.stackedData[valKey] = {}; // custom-biome-ignore-line deep-param-prop-assign"));
-        assert!(plan.source.contains("// biome-ignore lint/style/noParameterAssign"));
+            .contains("// biome-ignore lint/style/noParameterAssign"));
     }
 
     #[test]
@@ -918,6 +920,8 @@ mod tests {
         let source = "const a = (\n  <div>\n    {new Map()}\n  </div>\n);\n";
         let plan = plan(source, &[(3, "no-native-map")]);
         assert_eq!(plan.changes[0].placement, Placement::OwnLine);
-        assert!(plan.source.contains("{/* custom-biome-ignore-next-line no-native-map */}"));
+        assert!(plan
+            .source
+            .contains("{/* custom-biome-ignore-next-line no-native-map */}"));
     }
 }
