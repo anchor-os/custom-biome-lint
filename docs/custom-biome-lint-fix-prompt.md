@@ -75,10 +75,11 @@ v0.1.1, these also need the same update because they hardcode the literal string
   to still be "true" for a different reason)
 - `README.md` — 8 occurrences, all in the "Suppressions" and "Adding suppressions
   automatically" sections; these are the user-facing docs, get them right
-- `docs/RULES.md`, `docs/MIGRATION_NOTES.md`, `docs/ADDING_A_RULE.md`,
+- `docs/RULES.md`, `docs/MIGRATION_NOTES.md`,   `docs/ADDING_A_RULE.md` (the single canonical "how to add a rule" guide;
+  `docs/for-new-rule-addition.md` was merged into it),
   `docs/CI_CD_INTEGRATION.md`, `docs/INTEGRATION_GUIDE.md`, `docs/PACKAGE_JSON_SETUP.md`,
-  `docs/TESTING.md`, `docs/ARCHITECTURE.md`, `docs/EXTRACT_TO_SEPARATE_REPO.md`,
-  `docs/for-new-rule-addition.md` — all reference the old syntax in examples
+  `docs/TESTING.md`, `docs/ARCHITECTURE.md`, `docs/EXTRACT_TO_SEPARATE_REPO.md`
+  — all reference the old syntax in examples
 - `fixtures/no_native_map/suppressed.js`, `fixtures/no_arrow_function_create_selector/suppressed.js`,
   `fixtures/reselect_arity_match/suppressed.js` — these are read by the test suite at runtime
   (`cargo test`), not just documentation; must use the new marker or the suppression tests

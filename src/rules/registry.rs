@@ -5,7 +5,10 @@ use super::deep_param_prop_assign::DeepParamPropAssign;
 use super::destructure_default_param_assign::DestructureDefaultParamAssign;
 use super::destructure_param_prop_assign::DestructureParamPropAssign;
 use super::no_arrow_function_create_selector::NoArrowFunctionCreateSelector;
+use super::no_do_while_statement::NoDoWhileStatement;
+use super::no_for_statement::NoForStatement;
 use super::no_native_map::NoNativeMap;
+use super::no_while_statement::NoWhileStatement;
 use super::param_mutating_array_method_call::ParamMutatingArrayMethodCall;
 use super::reselect_arity_match::ReselectArityMatch;
 use super::rule::Rule;
@@ -26,6 +29,9 @@ impl RuleRegistry {
             rules: vec![
                 Box::new(NoNativeMap),
                 Box::new(NoArrowFunctionCreateSelector),
+                Box::new(NoDoWhileStatement),
+                Box::new(NoForStatement),
+                Box::new(NoWhileStatement),
                 Box::new(ReselectArityMatch),
                 Box::new(DestructureDefaultParamAssign),
                 Box::new(DestructureParamPropAssign),

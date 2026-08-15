@@ -49,15 +49,19 @@ fn registry_exposes_every_rule() {
             "destructure-default-param-assign",
             "destructure-param-prop-assign",
             "no-arrow-function-create-selector",
+            "no-do-while-statement",
+            "no-for-statement",
             "no-native-map",
+            "no-while-statement",
             "param-mutating-array-method-call",
             "reselect-arity-match"
         ]
     );
 }
 
-/// The two parameter-mutation rules that ship off by default, and the only
-/// rules for which `default_severity` is not `Error`.
+/// The six rules that ship off by default — the three parameter-mutation rules
+/// and the three loop-statement bans — and the only rules for which
+/// `default_severity` is not `Error`.
 #[test]
 fn only_the_opt_in_rules_default_to_off() {
     let registry = RuleRegistry::with_all_rules();
@@ -73,6 +77,9 @@ fn only_the_opt_in_rules_default_to_off() {
         vec![
             "bare-arrow-param-prop-assign",
             "deep-param-prop-assign",
+            "no-do-while-statement",
+            "no-for-statement",
+            "no-while-statement",
             "param-mutating-array-method-call"
         ]
     );
@@ -503,6 +510,142 @@ mod param_mutating_array_method_call {
     }
 }
 
+mod no_while_statement {
+    use super::*;
+
+    const RULE: &str = "no-while-statement";
+    const DIR: &str = "no_while_statement";
+
+    #[test]
+    fn valid_patterns_are_allowed() {
+        assert!(check_one(RULE, DIR, "valid.js").is_empty());
+    }
+
+    #[test]
+    fn while_loops_are_reported() {
+        let violations = check_one(RULE, DIR, "invalid.js");
+        assert_eq!(violations.len(), 3, "got {violations:?}");
+        assert!(violations.iter().all(|v| v.rule == RULE));
+        assert!(violations.iter().all(|v| v.severity == Severity::Error));
+        assert_eq!((violations[0].line, violations[0].col), (2, 3));
+    }
+
+    #[test]
+    fn suppression_comments_silence_the_rule() {
+        assert!(check_one(RULE, DIR, "suppressed.js").is_empty());
+    }
+
+    #[test]
+    fn edge_cases_produce_exactly_the_documented_violations() {
+        let violations = check_one(RULE, DIR, "edge-cases.js");
+        assert_eq!(violations.len(), 4, "got {violations:?}");
+        assert!(violations.iter().all(|v| v.rule == RULE));
+    }
+
+    #[test]
+    fn a_do_while_is_not_a_while() {
+        assert!(check_source(RULE, "do { x(); } while (y);", Path::new("a.js")).is_empty());
+    }
+
+    #[test]
+    fn position_points_at_the_while_keyword() {
+        let source = "export function f(q) {\n  while (q.length) {\n    g();\n  }\n}\n";
+        let violations = check_source(RULE, source, Path::new("a.js"));
+        assert_eq!((violations[0].line, violations[0].col), (2, 3));
+    }
+}
+
+mod no_do_while_statement {
+    use super::*;
+
+    const RULE: &str = "no-do-while-statement";
+    const DIR: &str = "no_do_while_statement";
+
+    #[test]
+    fn valid_patterns_are_allowed() {
+        assert!(check_one(RULE, DIR, "valid.js").is_empty());
+    }
+
+    #[test]
+    fn do_while_loops_are_reported() {
+        let violations = check_one(RULE, DIR, "invalid.js");
+        assert_eq!(violations.len(), 3, "got {violations:?}");
+        assert!(violations.iter().all(|v| v.rule == RULE));
+        assert!(violations.iter().all(|v| v.severity == Severity::Error));
+        assert_eq!((violations[0].line, violations[0].col), (2, 3));
+    }
+
+    #[test]
+    fn suppression_comments_silence_the_rule() {
+        assert!(check_one(RULE, DIR, "suppressed.js").is_empty());
+    }
+
+    #[test]
+    fn edge_cases_produce_exactly_the_documented_violations() {
+        let violations = check_one(RULE, DIR, "edge-cases.js");
+        assert_eq!(violations.len(), 4, "got {violations:?}");
+        assert!(violations.iter().all(|v| v.rule == RULE));
+    }
+
+    #[test]
+    fn a_plain_while_is_not_a_do_while() {
+        assert!(check_source(RULE, "while (y) { x(); }", Path::new("a.js")).is_empty());
+    }
+
+    #[test]
+    fn position_points_at_the_do_keyword() {
+        let source = "export function f() {\n  do {\n    g();\n  } while (h());\n}\n";
+        let violations = check_source(RULE, source, Path::new("a.js"));
+        assert_eq!((violations[0].line, violations[0].col), (2, 3));
+    }
+}
+
+mod no_for_statement {
+    use super::*;
+
+    const RULE: &str = "no-for-statement";
+    const DIR: &str = "no_for_statement";
+
+    #[test]
+    fn valid_patterns_are_allowed() {
+        assert!(check_one(RULE, DIR, "valid.js").is_empty());
+    }
+
+    #[test]
+    fn classic_for_loops_are_reported() {
+        let violations = check_one(RULE, DIR, "invalid.js");
+        assert_eq!(violations.len(), 3, "got {violations:?}");
+        assert!(violations.iter().all(|v| v.rule == RULE));
+        assert!(violations.iter().all(|v| v.severity == Severity::Error));
+        assert_eq!((violations[0].line, violations[0].col), (2, 3));
+    }
+
+    #[test]
+    fn suppression_comments_silence_the_rule() {
+        assert!(check_one(RULE, DIR, "suppressed.js").is_empty());
+    }
+
+    #[test]
+    fn edge_cases_produce_exactly_the_documented_violations() {
+        let violations = check_one(RULE, DIR, "edge-cases.js");
+        assert_eq!(violations.len(), 3, "got {violations:?}");
+        assert!(violations.iter().all(|v| v.rule == RULE));
+    }
+
+    #[test]
+    fn for_of_and_for_in_are_not_classic_for_loops() {
+        assert!(check_source(RULE, "for (const x of xs) { g(x); }", Path::new("a.js")).is_empty());
+        assert!(check_source(RULE, "for (const k in obj) { g(k); }", Path::new("a.js")).is_empty());
+    }
+
+    #[test]
+    fn position_points_at_the_for_keyword() {
+        let source = "export function f(items) {\n  for (let i = 0; i < items.length; i++) {\n    g(items[i]);\n  }\n}\n";
+        let violations = check_source(RULE, source, Path::new("a.js"));
+        assert_eq!((violations[0].line, violations[0].col), (2, 3));
+    }
+}
+
 mod config {
     use super::*;
 
@@ -633,8 +776,8 @@ mod patterns {
         let discovered = discover_files(&pattern, manifest_dir());
         assert_eq!(
             discovered.files.len(),
-            32,
-            "expected 4 fixtures for each of 8 rules, got {:?}",
+            44,
+            "expected 4 fixtures for each of 11 rules, got {:?}",
             discovered.files
         );
     }
@@ -643,7 +786,7 @@ mod patterns {
     fn explicit_glob_is_passed_through_unchanged() {
         let pattern = resolve_pattern("fixtures/**/invalid.js", manifest_dir(), "js,jsx");
         assert_eq!(pattern.raw(), "fixtures/**/invalid.js");
-        assert_eq!(discover_files(&pattern, manifest_dir()).files.len(), 8);
+        assert_eq!(discover_files(&pattern, manifest_dir()).files.len(), 11);
     }
 
     #[test]
