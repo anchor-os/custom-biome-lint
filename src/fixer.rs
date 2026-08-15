@@ -7,7 +7,7 @@
 //! point falls in a JSX child list. Anything that cannot be placed safely is
 //! reported as unfixable instead of being written.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -147,12 +147,29 @@ impl Fixer {
 
 /// Plans the suppression comments for a single file without touching disk.
 pub fn plan_file(path: &Path, source: &str, violations: &[Violation]) -> FilePlan {
-    let mut wanted: BTreeMap<usize, BTreeSet<&str>> = BTreeMap::new();
+    let lines = split_lines(source);
+    let starts = line_offsets(&lines);
+
+    // Map each violation's line to its rules plus the *byte offset of the
+    // violation itself*. The statement-boundedness check must anchor at the
+    // violation's column, not the physical start of the line: in
+    // `noop(); accum.x = {` the line start sits inside a single-line statement
+    // (`noop();`), so anchoring there would wrongly treat the real target
+    // (`accum.x = {...}`) as single-line and emit a trailing comment the
+    // formatter later detaches. See docs/WRITE_FIX_SUPPRESSION_PLACEMENT_BUG.md,
+    // Cases 1-2 and the CodeRabbit review on PR #27.
+    let mut wanted: BTreeMap<usize, BTreeMap<&'static str, usize>> = BTreeMap::new();
     for violation in violations {
+        let offset = violation
+            .line
+            .checked_sub(1)
+            .and_then(|i| starts.get(i))
+            .map(|&line_start| line_start + violation.col.saturating_sub(1))
+            .unwrap_or(0);
         wanted
             .entry(violation.line)
             .or_default()
-            .insert(violation.rule);
+            .insert(violation.rule, offset);
     }
 
     let unchanged = |unfixable| FilePlan {
@@ -172,9 +189,7 @@ pub fn plan_file(path: &Path, source: &str, violations: &[Violation]) -> FilePla
         return unchanged(all_unfixable(path, &wanted, "file has parse errors"));
     }
 
-    let lines = split_lines(source);
     let states = line_states(&lines);
-    let starts = line_offsets(&lines);
     let jsx = JsxText::collect(context.tree());
 
     let existing = find_suppression_comments(source);
@@ -190,8 +205,8 @@ pub fn plan_file(path: &Path, source: &str, violations: &[Violation]) -> FilePla
     let mut changes = Vec::new();
     let mut unfixable = Vec::new();
 
-    for (&line, rules) in &wanted {
-        let rules: Vec<&str> = rules.iter().copied().collect();
+    for (&line, rules_offsets) in &wanted {
+        let rules: Vec<&str> = rules_offsets.keys().copied().collect();
         let owned: Vec<String> = rules.iter().map(|r| r.to_string()).collect();
 
         // A comment already targets this line but lists other rules: extend it
@@ -234,13 +249,15 @@ pub fn plan_file(path: &Path, source: &str, violations: &[Violation]) -> FilePla
         // statement it attaches to begins and ends on the same physical line:
         // otherwise Biome may reprint that token onto a different line and the
         // suppression silently detaches. See docs/WRITE_FIX_SUPPRESSION_PLACEMENT_BUG.md.
-        let single_line = statement_is_single_line(&context, line, line_start);
+        let single_line = rules_offsets
+            .values()
+            .all(|&offset| statement_is_single_line(&context, line, offset));
 
         // A foreign (or another tool's own) suppression comment on the line
         // directly above already claims adjacency to the code. Inserting a
         // leading own-line marker there would sit between that comment and the
         // code, breaking its suppression (and our own would break too).
-        let foreign_above = line > 1 && is_suppression_comment(lines[line - 2].0);
+        let foreign_above = line > 1 && is_next_line_suppression_comment(lines[line - 2].0);
 
         // Trailing placement needs the end of the line to be code (or an
         // existing line comment we can extend), no marker already on it, and the
@@ -343,7 +360,7 @@ pub fn plan_file(path: &Path, source: &str, violations: &[Violation]) -> FilePla
 
 fn all_unfixable(
     path: &Path,
-    wanted: &BTreeMap<usize, BTreeSet<&str>>,
+    wanted: &BTreeMap<usize, BTreeMap<&'static str, usize>>,
     reason: &'static str,
 ) -> Vec<Unfixable> {
     wanted
@@ -351,7 +368,7 @@ fn all_unfixable(
         .map(|(&line, rules)| Unfixable {
             path: path.to_path_buf(),
             line_number: line,
-            rules: rules.iter().map(|r| r.to_string()).collect(),
+            rules: rules.keys().map(|r| r.to_string()).collect(),
             reason,
         })
         .collect()
@@ -494,18 +511,24 @@ fn node_at_offset(tree: &JsSyntaxNode, offset: usize) -> Option<JsSyntaxNode> {
     best.map(|(_, node)| node)
 }
 
-/// Whether the violation on `line` is the single, complete physical line of the
-/// smallest statement containing it.
+/// Whether the violation at byte `offset` on `line` is the single, complete
+/// physical line of the smallest statement containing it.
+///
+/// `offset` is the violation's own byte position (not the start of its line):
+/// anchoring at the line start would wrongly pick an earlier single-line
+/// statement when several share the line. See
+/// docs/WRITE_FIX_SUPPRESSION_PLACEMENT_BUG.md, Cases 1, 2 and the CodeRabbit
+/// review on PR #27.
 ///
 /// A trailing suppression comment is trivia attached to the statement's last
 /// token. When that token is reprinted onto a different physical line by a
 /// downstream formatter (which happens whenever the statement spans more than
 /// the violation line), the comment no longer covers the violation. Requiring
 /// the smallest enclosing statement to start and end on `line` guarantees the
-/// comment and the statement's last token share a line. See
-/// docs/WRITE_FIX_SUPPRESSION_PLACEMENT_BUG.md, Cases 1, 2 and the primary fix.
-fn statement_is_single_line(context: &FileContext, line: usize, line_start: usize) -> bool {
-    let Some(node) = node_at_offset(context.tree(), line_start) else {
+/// comment and the statement's last token share a line. See Cases 1, 2 and the
+/// primary fix.
+fn statement_is_single_line(context: &FileContext, line: usize, offset: usize) -> bool {
+    let Some(node) = node_at_offset(context.tree(), offset) else {
         // No node anchors this line (e.g. blank line): be conservative and
         // refuse trailing placement.
         return false;
@@ -525,16 +548,26 @@ fn statement_is_single_line(context: &FileContext, line: usize, line_start: usiz
     false
 }
 
-/// Whether `line` is shaped like a suppression comment written by this tool or
-/// a foreign one (Biome's `biome-ignore`, ESLint's `eslint-disable`). Used to
-/// avoid placing a leading own-line marker between such a comment and the code
-/// it suppresses. See docs/WRITE_FIX_SUPPRESSION_PLACEMENT_BUG.md, Case 4.
-fn is_suppression_comment(line: &str) -> bool {
+/// Whether `line` is a *next-line* suppression comment written by this tool or
+/// a foreign one — i.e. one whose semantics claim the immediately following
+/// code line (`biome-ignore`, `eslint-disable-next-line`,
+/// `custom-biome-ignore-next-line`). Used to avoid placing a leading own-line
+/// marker between such a comment and the code it suppresses. Directives that act
+/// on their own line (`eslint-disable`, `eslint-disable-line`,
+/// `custom-biome-ignore-line`) do NOT claim the next line, so a marker placed
+/// on the following line does not disturb them and must not be treated as
+/// circularly adjacent. See docs/WRITE_FIX_SUPPRESSION_PLACEMENT_BUG.md, Case 4
+/// and the CodeRabbit review on PR #27.
+fn is_next_line_suppression_comment(line: &str) -> bool {
     let Some(rest) = line.trim_start().strip_prefix("//") else {
         return false;
     };
     let rest = rest.trim_start();
-    for prefix in ["biome-ignore", "eslint-disable", "custom-biome-ignore"] {
+    for prefix in [
+        "biome-ignore",
+        "eslint-disable-next-line",
+        "custom-biome-ignore-next-line",
+    ] {
         if let Some(after) = rest.strip_prefix(prefix) {
             // Require a word boundary after the prefix so near-misses such as
             // `eslint-disablement` are not mistaken for a suppression comment.
@@ -675,9 +708,17 @@ mod tests {
     use crate::diagnostics::Violation;
 
     fn plan(source: &str, violations: &[(usize, &'static str)]) -> FilePlan {
+        let with_col: Vec<(usize, usize, &'static str)> = violations
+            .iter()
+            .map(|&(line, rule)| (line, 1, rule))
+            .collect();
+        plan_at(source, &with_col)
+    }
+
+    fn plan_at(source: &str, violations: &[(usize, usize, &'static str)]) -> FilePlan {
         let violations: Vec<Violation> = violations
             .iter()
-            .map(|&(line, rule)| Violation::error(rule, line, 1, "test"))
+            .map(|&(line, col, rule)| Violation::error(rule, line, col, "test"))
             .collect();
         plan_file(Path::new("a.jsx"), source, &violations)
     }
@@ -947,5 +988,75 @@ mod tests {
         assert!(plan
             .source
             .contains("{/* custom-biome-ignore-next-line no-native-map */}"));
+    }
+
+    #[test]
+    fn two_statements_on_line_violation_in_multiline_gets_own_line() {
+        // Regression for the CodeRabbit finding: anchoring the statement-
+        // boundedness check at the line start would see `noop();` (a single-line
+        // statement) and wrongly emit a trailing comment, which the formatter
+        // later detaches from the multi-line assignment. Anchoring at the
+        // violation column selects `accum.x = {...}` and yields an own-line
+        // marker instead.
+        let source = "noop(); accum.x = {\n  y: 1,\n};\n";
+        let plan = plan_at(source, &[(1, 9, "deep-param-prop-assign")]);
+        assert_eq!(plan.changes.len(), 1);
+        assert_eq!(plan.changes[0].placement, Placement::OwnLine);
+        let lines: Vec<&str> = plan.source.lines().collect();
+        assert!(lines[0].contains("// custom-biome-ignore-next-line deep-param-prop-assign"));
+    }
+
+    #[test]
+    fn eslint_disable_above_multiline_target_gets_own_line() {
+        // `eslint-disable` (block form) acts on its own line; it does not claim
+        // the next physical line. So a multi-line target below it is fixable with
+        // an own-line marker rather than reported unfixable. Regression for the
+        // CodeRabbit finding that the foreign-adjacency check over-matched
+        // non-next-line directives.
+        let source = "// eslint-disable no-console\naccum.x = {\n  y: 1,\n};\n";
+        let plan = plan(source, &[(2, "deep-param-prop-assign")]);
+        assert!(plan.unfixable.is_empty());
+        assert_eq!(plan.changes.len(), 1);
+        assert_eq!(plan.changes[0].placement, Placement::OwnLine);
+    }
+
+    #[test]
+    fn eslint_disable_next_line_above_multiline_target_is_unfixable() {
+        // A next-line directive DOES claim the following line, so circular
+        // adjacency still applies: a multi-line target below it is unfixable.
+        // Guards the narrowing of the foreign-adjacency check against dropping
+        // legitimate next-line directives.
+        let source = "// eslint-disable-next-line no-console\naccum.x = {\n  y: 1,\n};\n";
+        let plan = plan(source, &[(2, "deep-param-prop-assign")]);
+        assert!(plan.changes.is_empty());
+        assert_eq!(plan.unfixable.len(), 1);
+        assert_eq!(
+            plan.unfixable[0].reason,
+            "leading line already claimed by another tool's suppression comment and target spans multiple lines"
+        );
+    }
+
+    #[test]
+    fn multi_line_function_body_gets_own_line() {
+        // Table row 3: a non-arrow `function () {}` assigned across lines has the
+        // same reflow risk as the arrow form; the own-line placement must apply
+        // here too.
+        let source = "toolbar.getTabs = function () {\n  const exportTab = new Map();\n};\n";
+        let plan = plan(source, &[(1, "bare-arrow-param-prop-assign")]);
+        assert_eq!(plan.changes.len(), 1);
+        assert_eq!(plan.changes[0].placement, Placement::OwnLine);
+    }
+
+    #[test]
+    fn chained_assignment_spanning_lines_gets_own_line() {
+        // Table row 9: a chained/nested assignment whose LHS token sits on the
+        // first line but whose statement spans multiple lines. The statement-
+        // boundedness check must treat it as multi-line and place the marker on
+        // its own line, not trailing on the LHS.
+        let source =
+            "accum[diffInDays].orderTotal =\n  accum[diffInDays].orderTotal + summary.total;\n";
+        let plan = plan(source, &[(1, "deep-param-prop-assign")]);
+        assert_eq!(plan.changes.len(), 1);
+        assert_eq!(plan.changes[0].placement, Placement::OwnLine);
     }
 }
