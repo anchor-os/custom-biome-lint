@@ -13,14 +13,14 @@ Deviations from the plan as written, all deliberate:
 | `RuleRegistry::enabled` filters on `config.severity_override(name).unwrap_or_else(\|\| rule.default_severity())` | `config.severity(name, rule.default_severity())`, a new method | `severity_override` returns `None` for *both* "no entry" and `"off"`, so the plan's expression would have resurrected an explicitly-disabled rule at its default severity. |
 | Rule 3's coverage of bare *reassignment* left "to decide at implementation time" | Not covered | Decided by repro, as the plan asked: Biome 2.5.8 **does** flag `d => { d = 5 }`. Only property mutation is missed, so only property mutation is in scope. |
 | Rule 3 detection by visiting `JsArrowFunctionExpression` nodes and walking their bodies | Uniform assignment-target walk, filtered on the parameter binding's declared shape | Same result with no body-walking special case, and nested-arrow attribution falls out of semantic resolution rather than needing its own handling. |
-| Expected ~13 findings from rules 1/2 and ~101 from rules 3/4 on the dashboard | 12 and 218 | Verified in full; see [RULES.md](RULES.md#the-four-parameter-mutation-rules). The estimates counted existing `eslint-disable` comments bucketed by cause; the rules report every occurrence, and 96% of findings still land on a previously-suppressed line. |
+| Expected ~13 findings from rules 1/2 and ~101 from rules 3/4 on the <PRIVATE_REPO> | 12 and 218 | Verified in full; see [RULES.md](RULES.md#the-four-parameter-mutation-rules). The estimates counted existing `eslint-disable` comments bucketed by cause; the rules report every occurrence, and 96% of findings still land on a previously-suppressed line. |
 
 The original proposal follows below, with two corrections applied in place so
 nothing in it is copy-pasteable-but-wrong: rule names are the shipped kebab-case
 ones throughout, and the superseded `severity_override` recipe is marked as such
 where it appears.
 
-Covers all 186 of the dashboard's uncovered `no-param-reassign` entries, in two
+Covers all 186 of the <PRIVATE_REPO>'s uncovered `no-param-reassign` entries, in two
 pairs:
 
 | # | Rule | Closes | Default |
@@ -34,7 +34,7 @@ Rules 1 & 2 were the original scope of this plan (see "Rule 1"/"Rule 2" below,
 unchanged). Rules 3 & 4 were added in a follow-up round after the maintainers
 decided to also close the two buckets originally listed under "Non-goals."
 
-**Origin:** the dashboard's `no-param-reassign` → Biome migration coverage audit
+**Origin:** the <PRIVATE_REPO>'s `no-param-reassign` → Biome migration coverage audit
 found 186 `eslint-disable(-next-line/-line) no-param-reassign` comments with no
 matching `biome-ignore`. Biome's own `lint/style/noParameterAssign` (already
 enabled with `propertyAssignment: "deny"`) turns out to only track **plain
@@ -53,7 +53,7 @@ issue, since `noParameterAssign` has no option that extends its reach to
 destructuring. These two rules close exactly that gap. (The other 173 entries
 are plain params invisible to Biome for unrelated reasons — bare single-arrow-param
 formatting interaction and multi-level chained-mutation blind spots — out of
-scope here; see the dashboard's `no-param-reassign-classification.md` for that
+scope here; see the <PRIVATE_REPO>'s `<PRIVATE_DOC>` for that
 half of the investigation.)
 
 Two rules rather than one because they're independently useful and independently
@@ -64,7 +64,7 @@ comments precise about which behavior is being accepted.
 
 ## Rationale
 
-The dashboard is Redux + Immutable.js, with sagas and reducers built almost
+The <PRIVATE_REPO> is Redux + Immutable.js, with sagas and reducers built almost
 entirely around destructured `action`/`payload`/`state` parameters:
 
 ```js
@@ -83,17 +83,17 @@ or reducer reads later. Biome's rule stops at the parameter's own top-level
 binding shape; it never asks "did this identifier come from a destructuring
 pattern in the parameter list," so every one of these mutations is currently
 invisible under both ESLint (removed) and Biome (doesn't reach here). Real
-examples from the dashboard's 13 confirmed cases (see
-`no-param-reassign-classification.md`):
+examples from the <PRIVATE_REPO>'s 13 confirmed cases (see
+`<PRIVATE_DOC>`):
 
 ```js
-// src/sagas/getSMSSessionsOfCustomers.js — destructure-param-prop-assign territory
+// src/sagas/example.js — destructure-param-prop-assign territory
 export function* getSMSSessionsOfCustomersSaga({ payload }) {
   payload.token = yield call(getIdToken);
   ...
 }
 
-// src/lib/objects.js — destructure-param-prop-assign territory
+// src/lib/example.js — destructure-param-prop-assign territory
 export const renameObjKey = ({ obj, oldName, newName }) => {
   obj[newName] = obj[oldName];
   delete obj[oldName];
@@ -611,7 +611,7 @@ maintainers decided these two should ship **off by default**, enabled only
 when a consuming repo explicitly opts in — mirroring the semantics of Biome's
 own `noParameterAssign.propertyAssignment` option (`"allow"` default,
 `"deny"` to enable property-assignment checking), which is exactly the option
-this dashboard's own `biome.json` already flips to `"deny"`.
+this <PRIVATE_REPO>'s own `biome.json` already flips to `"deny"`.
 
 ### What exists today
 
@@ -857,8 +857,8 @@ end-to-end by following this list in order.
     column is the same `.js`, `.jsx` for all four; add a note in Rules 3 & 4's
     rows that they're off by default, unlike the other five). Update the "Real
     -codebase findings" section with actual counts from a real run against
-    the dashboard, not the ~13/~69/~32 estimates from the classification
-    report — re-verify against the dashboard's current state at
+    the <PRIVATE_REPO>, not the ~13/~69/~32 estimates from the classification
+    report — re-verify against the <PRIVATE_REPO>'s current state at
     implementation time, since it's under active rebase and file:line
     specifics will have drifted.
 16. **`ADDING_A_RULE.md`.** Add a short note under "Autofix (optional)" and/or
@@ -868,13 +868,13 @@ end-to-end by following this list in order.
     than on-by-default) — this is new tool capability, not just new rules, and
     deserves the same documentation treatment `ADDING_A_RULE.md` gives every
     other trait method.
-17. **Integration sanity check against the real dashboard.** Run
+17. **Integration sanity check against the real <PRIVATE_REPO>.** Run
     `custom-biome-lint 'src/**/*.{js,jsx}' 'cypress/**/*.{js,jsx}'` against
-    the dashboard repo with rules 3 & 4 enabled via
+    the <PRIVATE_REPO> repo with rules 3 & 4 enabled via
     `ignoreBiomeExtensionRules` set to `"error"` for both, and compare the
     finding count/positions against the 186-line source list in
-    `no-param-reassign-classification.md` (re-run
-    `scripts/eslint-disable-coverage-report.js` first, since the dashboard
+    `<PRIVATE_DOC>` (re-run
+    `<PRIVATE_TOOLING>` first, since the <PRIVATE_REPO>
     will have moved on from the exact snapshot that report was generated
     against). Expect roughly 13 findings from Rules 1/2 combined and up to
     ~101 from Rules 3/4 combined (69 + 32, with the overlap lines counted by
@@ -906,8 +906,8 @@ the original single-pair version of this plan.)
   template (Message / Source / "What it catches" / "Before / after" / any
   rule-specific subsection / suppression note), plus a new row each in the
   summary table at the top and the "Real-codebase findings" section updated
-  with the dashboard's actual count once implemented (expected: up to 13,
-  pending re-verification at implementation time since the dashboard is under
+  with the <PRIVATE_REPO>'s actual count once implemented (expected: up to 13,
+  pending re-verification at implementation time since the <PRIVATE_REPO> is under
   active rebase). Folded into Step 15 of the checklist, alongside Rules 3 & 4.
 
 ## Non-goals for this plan

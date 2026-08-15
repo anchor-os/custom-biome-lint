@@ -161,7 +161,7 @@ A single self-contained executable with no runtime dependencies — it can be
 copied anywhere.
 
 Run it from the directory whose files you want to lint, since patterns are
-resolved relative to the working directory. From `UI/dashboard`:
+resolved relative to the working directory. From `<your-repo>`:
 
 ```sh
 ./custom-biome-lint/target/release/custom-biome-lint 'src/**/*.{js,jsx}'
@@ -244,7 +244,7 @@ cargo test                             # expect 209 passing
 ```
 
 If both match, the setup is good. [TESTING.md](TESTING.md) covers the full
-verification procedure, including running against the real dashboard tree.
+verification procedure, including running against the real <PRIVATE_REPO> tree.
 
 ## Next steps
 

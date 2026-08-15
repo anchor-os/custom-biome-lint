@@ -1,7 +1,7 @@
 # CI/CD integration
 
 **Status: guidance only — none of this has been applied yet.** The tool builds,
-passes its tests, and runs correctly against the dashboard tree, but it is not
+passes its tests, and runs correctly against the <PRIVATE_REPO> tree, but it is not
 wired into any hook or pipeline. This document is the plan for doing that.
 
 Before wiring it in, complete the suppression-comment migration described in
@@ -77,7 +77,7 @@ rules is worse than a slow build.
 Local development needs the same one-time step:
 
 ```sh
-cd UI/dashboard/custom-biome-lint && cargo build --release
+cd <your-repo>/custom-biome-lint && cargo build --release
 ```
 
 Developers without Rust installed will need it — see [SETUP.md](SETUP.md). This is
@@ -142,7 +142,7 @@ yarn biome:check
 echo "Running custom lint rules..."
 if ! yarn lint:custom; then
   echo ""
-  echo "Custom lint rules failed. See UI/dashboard/custom-biome-lint/docs/RULES.md"
+  echo "Custom lint rules failed. See <your-repo>/custom-biome-lint/docs/RULES.md"
   echo "To suppress a specific finding: // custom-biome-ignore-next-line <rule-name>"
   exit 1
 fi
@@ -223,14 +223,14 @@ which check broke, and can use a Rust image without touching the Node jobs.
   cache:
     key:
       files:
-        - UI/dashboard/custom-biome-lint/Cargo.lock
+        - <your-repo>/custom-biome-lint/Cargo.lock
     paths:
-      - UI/dashboard/custom-biome-lint/target/
+      - <your-repo>/custom-biome-lint/target/
       - .cargo/
   variables:
     CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
   before_script:
-    - cd UI/dashboard/custom-biome-lint
+    - cd <your-repo>/custom-biome-lint
     - cargo build --release
     - cd ..
   script:
@@ -257,7 +257,7 @@ Key points:
   the crate downloads are not cached.
 - **`cargo build --release`, never debug.** Debug builds are several times slower
   at runtime.
-- **Adjust paths** if your `.gitlab-ci.yml` already runs from `UI/dashboard`.
+- **Adjust paths** if your `.gitlab-ci.yml` already runs from `<your-repo>`.
 
 ### Verifying the CI setup
 
@@ -311,7 +311,7 @@ custom-lint-mr:
 ## Optional: disabling a rule in CI
 
 If a rule proves too noisy, disable it by name in
-`UI/dashboard/package.json` rather than removing the whole check:
+`<your-repo>/package.json` rather than removing the whole check:
 
 ```json
 {

@@ -176,10 +176,10 @@ ESLint's format — a path header, aligned `line:col  severity  message  rule`
 rows, then a summary:
 
 ```
-src/components/MapBuilder/MapCanvas.jsx
+src/components/Example.jsx
   120:30  error  Use Immutable.js Map instead of native Map.  no-native-map
 
-src/selectors/users.js
+src/selectors/example.js
   12:64  error  createSelector expects 1 parameter(s) in the result function, but found 2.  reselect-arity-match
 
 ✖ 2 errors in 2 files
@@ -199,7 +199,7 @@ custom-biome-lint --format json > report.json
   "version": 1,
   "files": [
     {
-      "path": "src/selectors/users.js",
+      "path": "src/selectors/example.js",
       "violations": [
         {
           "line": 12,
@@ -463,5 +463,5 @@ cargo deny check                              # licenses, bans, sources all ok
 npm run test:js                               # JS launcher (bin/cli.js) tests
 ```
 
-Full procedure, including running against the real dashboard tree and how the
+Full procedure, including running against the real <PRIVATE_REPO> tree and how the
 portability check was done: [docs/TESTING.md](docs/TESTING.md).

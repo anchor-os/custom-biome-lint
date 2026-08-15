@@ -9,7 +9,7 @@ non-issues (out of scope by design, or a dead comment), and the 3rd —
 `productsData.push(product);` — is a genuinely new gap none of the four
 existing rules (or Biome itself) can close, because it's a **mutating method
 call**, not an assignment expression. This document scopes that gap for real
-against the dashboard corpus (not just the one instance that happened to
+against the <PRIVATE_REPO> corpus (not just the one instance that happened to
 surface) before proposing a rule.
 
 ## Rationale
@@ -75,15 +75,15 @@ diligence applied.
 
 ## Scoping (step 2) — real corpus data, not the one known instance
 
-Grepped `src/` and `cypress/` in the dashboard repo for the mutating method
+Grepped `src/` and `cypress/` in the <PRIVATE_REPO> repo for the mutating method
 names, then **parsed every matching file with `@babel/parser` +
-`@babel/traverse`** (both already present in the dashboard's own
+`@babel/traverse`** (both already present in the <PRIVATE_REPO>'s own
 `node_modules`) and resolved each call's receiver identifier to its actual
 scope binding — not name-matching, real binding resolution — keeping only
 calls whose receiver binding is `kind === 'param'` (a function parameter,
 plain or from a destructuring pattern, any depth of member-chain from it).
 This is the same rigor as the original classification report
-(`no-param-reassign-classification.md`), just automated with a real parser
+(`<PRIVATE_DOC>`), just automated with a real parser
 instead of manual `biome check --only=...` repro, since this shape needs
 call-expression + scope resolution that a lint-rule-flag repro can't test
 directly.
@@ -129,15 +129,15 @@ Set(` constructions codebase-wide, i.e. genuine native Map/Set use is rare).
 Real examples pulled straight from the scoping data:
 
 ```js
-// src/components/EventBuilder/PriceMatrix/index.js:29 — Immutable.Map#set,
+// src/components/Example.jsx:29 — Immutable.Map#set,
 // NOT a mutation. product is an Immutable Record/Map; this returns a new one.
 return product.set('name', name);
 
-// src/components/EventBuilder/Edits/SelectPublicPricelists/Pricing.jsx:399
+// src/components/Example.jsx:399
 // Immutable.List#push, NOT a mutation — pricelists.push(...) returns a new List.
 onClick={() => onUpdatePricingState({ pricelists: pricelists.push(Map({ pricelistId: '' })) })}
 
-// src/selectors/dailyOpsReport.js:49 — same story, Immutable.Map#set.
+// src/selectors/example.js:49 — same story, Immutable.Map#set.
 export const setDailyOpsMappings = (state, payload) => state.set('mappings', payload);
 ```
 
@@ -147,7 +147,7 @@ not mutate a plain array parameter either**, even though the parameter
 itself is a plain (non-Immutable) object:
 
 ```js
-// src/components/ProductsAddEdit/VendorFields.jsx:136 — `fields` here is the
+// src/components/Example.jsx:136 — `fields` here is the
 // object redux-form's <FieldArray render={({ fields }) => ...}/> provides,
 // not an Array. fields.push() dispatches an ARRAY_PUSH action; it doesn't
 // mutate anything the caller can observe as a mutation bug.
@@ -169,7 +169,7 @@ established elsewhere (a reducer, a prop passed down) rather than visible
 in the same file:
 
 ```js
-// src/components/ManageOnlineShop/AddCategoryForm/AddCategoryForm.jsx:45
+// src/components/Example.jsx:45
 // `values` is a redux-form Immutable value; .set() here is non-mutating,
 // but nothing in THIS file's imports proves that.
 const submissionValues = values.set('actionType', this.state.actionType);
@@ -191,13 +191,13 @@ called out as this codebase's single most common mutation shape — `reduce`/
 property assignment:
 
 ```js
-// src/sagas/pollForOrderFulfillment.js:136
+// src/sagas/example.js:136
 accum.push(item);
 
-// src/components/MembershipDashboard/MembershipOverview.jsx:51,58,65
+// src/components/Example.jsx:51,58,65
 acc.push([name, count]);
 
-// src/components/Sidebar/Sidebar.jsx:62,64
+// src/components/Example.jsx:62,64
 accum.favoriteLists.push(item);
 accum.unFavoriteLists.push(item);
 
@@ -525,8 +525,8 @@ was implemented and merged behind PR #26.
    `cargo test && cargo clippy --all-targets` pass.
 8. ✅ `docs/RULES.md` updated with the rule's section (precision tradeoff,
    low-confidence signal, rollout caveat, non-goals) and the opt-in example.
-9. ⚠️ Not run against the live dashboard corpus (separate repo, not available in
-   this environment). The dashboard tally in `docs/RULES.md` deliberately excludes
+9. ⚠️ Not run against the live <PRIVATE_REPO> corpus (separate repo, not available in
+   this environment). The <PRIVATE_REPO> tally in `docs/RULES.md` deliberately excludes
    this rule and points here for its scoping; the ~251 estimate remains the
    expected ballpark should it be run.
 10. ✅ No automated `--write-fix` rollout built; the rule ships off by default with
@@ -578,7 +578,7 @@ was implemented and merged behind PR #26.
    limitation and the low-confidence signal, so anyone enabling this rule
    reads the caveat before turning it on.
 9. **Integration sanity check against the real corpus.** Re-run this rule
-   (once implemented) against the dashboard repo with the config enabled,
+   (once implemented) against the <PRIVATE_REPO> repo with the config enabled,
    confirm the raw finding count is in the neighborhood of 251 (the
    array-method-only raw count measured in this scoping pass — some drift
    is expected from edge cases fixtures uncover that this pass's babel-based

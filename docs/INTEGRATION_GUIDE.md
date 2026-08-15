@@ -10,13 +10,13 @@ that follows.
 
 | Situation | Read |
 | --- | --- |
-| Tool already lives in the dashboard at `custom-biome-lint/` | [CI_CD_INTEGRATION.md](CI_CD_INTEGRATION.md) — CI jobs, hooks, rollout order |
+| Tool already lives in the <PRIVATE_REPO> at `custom-biome-lint/` | [CI_CD_INTEGRATION.md](CI_CD_INTEGRATION.md) — CI jobs, hooks, rollout order |
 | Adding it to a new project | this document |
 | Just need the scripts and fields | [PACKAGE_JSON_SETUP.md](PACKAGE_JSON_SETUP.md) |
 | Replacing ESLint rules | [MIGRATION_NOTES.md](MIGRATION_NOTES.md) |
 
 Paths differ between setups, and mixing them up is the most common integration
-error. In the dashboard the tool is at `custom-biome-lint/`; the examples below
+error. In the <PRIVATE_REPO> the tool is at `custom-biome-lint/`; the examples below
 assume an external tool at `tools/custom-biome-lint/`. Adjust one or the other —
 do not copy both.
 
@@ -150,7 +150,7 @@ reference in [PACKAGE_JSON_SETUP.md](PACKAGE_JSON_SETUP.md).
 the recommended rollout order, and how to make a rule non-blocking while you
 observe it. Read it — this section only covers what an *external* tool adds.
 
-The dashboard's `.gitlab-ci.yml` uses `image: node:26.4.0` with a `lint` job that
+The <PRIVATE_REPO>'s `.gitlab-ci.yml` uses `image: node:26.4.0` with a `lint` job that
 runs `yarn eslint && yarn prettier:check`. Since the image has no Rust, add a
 dedicated job rather than bolting cargo onto the Node one:
 
@@ -193,7 +193,7 @@ configuration.
 
 ## E. Pre-push hook
 
-The dashboard's `.husky/pre-push` currently reads:
+The <PRIVATE_REPO>'s `.husky/pre-push` currently reads:
 
 ```sh
 yarn eslint && yarn prettier:check
@@ -251,7 +251,7 @@ The sequence to put in the project's contributing guide:
 ```sh
 # 1. Clone with submodules (Option 1; plain clone otherwise).
 git clone --recurse-submodules git@gitlab.com:your-org/your-app.git
-cd dashboard
+cd <PRIVATE_REPO>
 
 # Already cloned without them?
 git submodule update --init --recursive

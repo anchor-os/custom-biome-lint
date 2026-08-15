@@ -42,7 +42,7 @@ fewer round-trips:
 
 ## Rationale
 
-The dashboard repo's old ESLint config banned 9 AST constructs under one rule,
+The <PRIVATE_REPO> repo's old ESLint config banned 9 AST constructs under one rule,
 `no-restricted-syntax` (the classic Airbnb "no loops, use functional iteration
 instead" rule): `DoWhileStatement`, `ForStatement`, `ForInStatement`,
 `ForOfStatement`, `SwitchCase`, `SwitchStatement`, `WhileStatement`,
@@ -127,7 +127,7 @@ correctness or performance improvement the way `no-native-map` or
 `reselect-arity-match` are. A consuming repo that has no opinion on loop
 style has no use for these rules at all — same posture as
 `bare-arrow-param-prop-assign`'s own doc: *"a repo [with a different
-convention] has no use for it at all."* Ship off, let the dashboard repo (and
+convention] has no use for it at all."* Ship off, let the <PRIVATE_REPO> repo (and
 any other adopting repo with the same house style) opt in explicitly.
 
 ## Rule 1 — `no-while-statement`
@@ -194,7 +194,7 @@ for node in file.tree().descendants() {
 
 ### Note on current scope
 
-Zero live instances exist in the dashboard repo today (confirmed via the
+Zero live instances exist in the <PRIVATE_REPO> repo today (confirmed via the
 audit breakdown). Build this rule anyway for completeness and regression
 protection — a fixture set with a synthetic invalid case is enough; there's
 no real-codebase example to draw from the way other rules cite one.
@@ -246,7 +246,7 @@ distinct generated node types (not one `JsForStatement` with a discriminant
 field), there is no risk of this rule accidentally catching a for-in/for-of
 loop — the cast simply fails to match on those node kinds. No manual
 discrimination logic needed, unlike the audit script's own regex-based
-classifier (`scripts/eslint-disable-coverage-report.js`), which has to guess
+classifier (`<PRIVATE_TOOLING>`), which has to guess
 from source text since it doesn't have a real parser.
 
 ## Suppression
@@ -320,7 +320,7 @@ exists.
    asserted by the rule's test (`every_rule_has_fixtures_for_all_four_cases`
    enforces the four-file set, but the per-rule test must also assert the
    edge-cases count so it can't silently drift). For `no-do-while-statement`,
-   since no real dashboard example exists, write a synthetic invalid case
+   since no real <PRIVATE_REPO> example exists, write a synthetic invalid case
    matching the `do-while` shape shown in this doc.
 5. Add a test module per rule to `tests/integration.rs` (see `ADDING_A_RULE.md`
    §Step 5). Use `check_source(rule, source, path)` for inline snippets and
@@ -336,8 +336,8 @@ exists.
    `./target/release/custom-biome-lint fixtures` (exits `1` by design — the
    fixtures contain deliberate violations; CI wraps it in `test "$code" -eq 1`).
    Verify reported positions with `fixtures --write-fix --dry-run`.
-8. Integration sanity check: build the tool, then in the dashboard repo
-   (`/Users/Manish.Sharma/hornblower/UI/dashboard/.claude/worktrees/vite-for-dashboard`),
+8. Integration sanity check: build the tool, then in the <PRIVATE_REPO> repo
+   (`<PRIVATE_REPO>/.claude/worktrees/vite-for-<PRIVATE_REPO>`),
    temporarily set `"ignoreBiomeExtensionRules": { "no-while-statement":
    "error", "no-do-while-statement": "error", "no-for-statement": "error" }`
    and run `custom-biome-lint` against `src/**/*.{js,jsx}` — confirm the
