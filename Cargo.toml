@@ -18,8 +18,9 @@ path = "src/bin/custom-biome-lint.rs"
 # Biome is consumed from git: the standalone `biome_js_parser`/`biome_js_syntax`
 # crates on crates.io are frozen at 0.5.7 (pre-1.0), which cannot parse `$`-prefixed
 # identifiers (e.g. the Cypress `$el` convention). Modern Biome (1.x/2.x) is only
-# published via the monorepo, so we pin all three crates to one commit to keep the
-# graph unified. Only the parser/source/rowan crates are used directly.
+# published via the monorepo, so we pin all four direct crates—
+# biome_js_parser, biome_js_syntax, biome_rowan, and biome_languages—to one commit
+# to keep the graph unified. All four are used directly.
 [dependencies]
 # `version` is required alongside `rev` so cargo-deny's `wildcards` lint sees a
 # concrete version rather than treating the git source as a wildcard. Biome's
