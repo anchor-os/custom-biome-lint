@@ -42,7 +42,7 @@ Rules 1 and 2 are always on, like the original three. Rules 3 and 4 ship
 **off by default** and must be opted into per repo, as does
 `param-mutating-array-method-call` (rule 5, a `CallExpression` companion to
 rules 1–4 that closes the gap ESLint's `no-param-reassign` used to cover) — see
-[Opting into the three default-off rules](#opting-into-the-three-default-off-rules).
+[Opting into the default-off rules](#opting-into-the-default-off-rules).
 
 | Rule | Guards against | Extensions | `--auto-fix` |
 | --- | --- | --- | --- |
@@ -522,7 +522,7 @@ re-reported later as missed cases:
 ## `bare-arrow-param-prop-assign`
 
 **Off by default.** See
-[Opting into the three default-off rules](#opting-into-the-three-default-off-rules).
+[Opting into the default-off rules](#opting-into-the-default-off-rules).
 
 **Message:** `Mutating a property of parameter "<name>" is invisible to Biome's
 noParameterAssign because this arrow's single parameter has no parens. Add
@@ -588,7 +588,7 @@ the parameter correctly resolves to the local.
 ## `deep-param-prop-assign`
 
 **Off by default.** See
-[Opting into the three default-off rules](#opting-into-the-three-default-off-rules).
+[Opting into the default-off rules](#opting-into-the-default-off-rules).
 
 **Message:** `Mutating parameter "<name>" 2+ levels deep ("<chain>") is
 invisible to Biome's noParameterAssign, which only tracks one level. Copy the
@@ -672,7 +672,7 @@ On the dashboard, 21 lines trip both rules; the rest trip exactly one.
 ## `param-mutating-array-method-call`
 
 **Off by default.** See
-[Opting into the three default-off rules](#opting-into-the-three-default-off-rules).
+[Opting into the default-off rules](#opting-into-the-default-off-rules).
 
 **Message:** `Mutating array method called on a parameter — this modifies data
 the caller still holds a reference to. Copy the parameter first.` Findings in a
@@ -799,20 +799,161 @@ workflow caution about suppression, not a claim about fixer capability.
 
 ---
 
-## Opting into the three default-off rules
+## `no-while-statement`
 
-`bare-arrow-param-prop-assign`, `deep-param-prop-assign`, and
-`param-mutating-array-method-call` are the only rules whose `default_severity()`
-is `off`. With no configuration they never run — the same posture as Biome's own
-`noParameterAssign.propertyAssignment: "allow"` default. Turn them on by giving
-them a severity in `package.json`:
+**Off by default.** See [Opting into the default-off rules](#opting-into-the-default-off-rules).
+
+**Message:** `Avoid `while` loops — use functional iteration (e.g. `Array.prototype` methods) instead.`
+
+**Severity:** Every finding reports at **error** severity once the rule is opted in. The rule is an existence ban with zero ambiguity, so there is no graduated severity.
+
+**Source:** `src/rules/no_while_statement.rs`
+
+### What it catches
+
+Any `while (...) { ... }` statement. The bare existence of the node is the violation; its condition, body, and context are irrelevant.
+
+```js
+while (queue.length > 0) {           // flagged
+  process(queue.shift());
+}
+```
+
+```js
+queue.forEach(item => process(item)); // not flagged — no while statement
+```
+
+### Before / after
+
+```js
+// ✗ Flagged — a serial while loop
+while (queue.length > 0) {
+  process(queue.shift());
+}
+```
+
+```js
+// ✓ Clean — functional iteration
+const results = queue.map(process);
+```
+
+### Known non-goals
+
+- `do...while` and classic `for` loops are separate rules (`no-do-while-statement`, `no-for-statement`); this rule only flags `while`.
+- There is deliberately **no autofix**: rewriting a loop into equivalent functional code requires understanding intent (early-exit via `break`, accumulator shape, ordering), which the rule cannot infer. `--write-fix` still inserts suppression comments.
+
+---
+
+## `no-do-while-statement`
+
+**Off by default.** See [Opting into the default-off rules](#opting-into-the-default-off-rules).
+
+**Message:** `Avoid `do...while` loops — use functional iteration (e.g. `Array.prototype` methods) instead.`
+
+**Severity:** Every finding reports at **error** severity once the rule is opted in. The rule is an existence ban with zero ambiguity, so there is no graduated severity.
+
+**Source:** `src/rules/no_do_while_statement.rs`
+
+### What it catches
+
+Any `do { ... } while (...) ` statement.
+
+```js
+do {                    // flagged
+  attempt();
+} while (!success());
+```
+
+```js
+queue.forEach(item => process(item)); // not flagged — no do-while statement
+```
+
+### Before / after
+
+```js
+// ✗ Flagged — a do-while loop
+do {
+  attempt();
+} while (!success());
+```
+
+```js
+// ✓ Clean — functional iteration that may run zero or more times
+const attempts = buildAttempts();
+const succeeded = attempts.find(success);
+```
+
+### Known non-goals
+
+- `while` and classic `for` loops are separate rules (`no-while-statement`, `no-for-statement`); this rule only flags `do...while`.
+- There is deliberately **no autofix** (see `no-while-statement` above).
+
+---
+
+## `no-for-statement`
+
+**Off by default.** See [Opting into the default-off rules](#opting-into-the-default-off-rules).
+
+**Message:** `Avoid classic `for` loops — use functional iteration (e.g. `Array.prototype` methods) instead.`
+
+**Severity:** Every finding reports at **error** severity once the rule is opted in. The rule is an existence ban with zero ambiguity, so there is no graduated severity.
+
+**Source:** `src/rules/no_for_statement.rs`
+
+### What it catches
+
+Any classic three-clause `for (init; test; update) { ... }` loop — **not** `for...of` or `for...in`, which are distinct AST node kinds (`JsForOfStatement` / `JsForInStatement`) and out of scope here (Biome's `useForOf` actually *prefers* `for...of`).
+
+```js
+for (let i = 0; i < items.length; i++) {   // flagged
+  process(items[i]);
+}
+```
+
+```js
+for (const item of items) { process(item); } // NOT flagged — different node kind (JsForOfStatement)
+for (const key in obj) { ... }               // NOT flagged — different node kind (JsForInStatement)
+```
+
+### Before / after
+
+```js
+// ✗ Flagged — a counted for loop
+for (let i = 0; i < items.length; i++) {
+  process(items[i]);
+}
+```
+
+```js
+// ✓ Clean — functional iteration
+items.forEach(process);
+```
+
+### Known non-goals
+
+- `for...of` / `for...in` are out of scope (see above).
+- There is deliberately **no autofix** (see `no-while-statement` above).
+
+---
+
+## Opting into the default-off rules
+
+`bare-arrow-param-prop-assign`, `deep-param-prop-assign`,
+`param-mutating-array-method-call`, `no-while-statement`,
+`no-do-while-statement`, and `no-for-statement` are the six rules whose
+`default_severity()` is `off`. With no configuration they never run — the same
+posture as Biome's own `noParameterAssign.propertyAssignment: "allow"` default.
+Turn them on by giving them a severity in `package.json`:
 
 ```json
 {
   "ignoreBiomeExtensionRules": {
     "bare-arrow-param-prop-assign": "error",
     "deep-param-prop-assign": "warn",
-    "param-mutating-array-method-call": "warn"
+    "param-mutating-array-method-call": "warn",
+    "no-while-statement": "error",
+    "no-do-while-statement": "error",
+    "no-for-statement": "error"
   }
 }
 ```
@@ -824,7 +965,7 @@ This reuses the existing severity mechanism rather than adding a second,
 Biome-shaped config namespace; see
 [ADDING_A_RULE.md](ADDING_A_RULE.md#default-severity-shipping-a-rule-off-by-default)
 for how `default_severity()` works and when a new rule should use it. Unlike the
-other five rules, these three appear in the `-v` "rules ignored" listing when
+other five rules, these six appear in the `-v` "rules ignored" listing when
 unconfigured, because that is what unconfigured means for them.
 
 ---
