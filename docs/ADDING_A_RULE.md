@@ -6,6 +6,14 @@ prompt you can hand to an AI agent: a developer new to the codebase, or an agent
 with no other context, should be able to add a rule end to end from this file
 alone.
 
+This document deliberately serves two readers at once: a **human contributor**
+(read it top to bottom as a reference) and an **AI agent** (skip to the
+[Step-by-step checklist](#step-by-step-checklist) and execute it). The
+conceptual sections — Rule anatomy, the existing-rules table, pitfalls, and AST
+lookup — explain *why*; the checklist is the *procedure*. You do not need the
+concepts to follow the steps, but you will need them to debug a rule that
+misbehaves.
+
 It replaces the old `for-new-rule-addition.md`, which is now deleted — do not
 link to that path. If you find a stray reference, point it here.
 
@@ -126,11 +134,13 @@ and wrong for deciding whether the rule runs at all. See
 [RULES.md#opting-into-the-default-off-rules](RULES.md#opting-into-the-default-off-rules).
 
 Reach for this when a rule's findings are opinionated or style-contingent enough
-that a repo should have to ask for them. Three rules already ship off by default
-(`bare-arrow-param-prop-assign`, `deep-param-prop-assign`,
-`param-mutating-array-method-call`) — a loop-ban rule is the same posture (a
-house style, not a universal correctness fix). A rule that is simply *noisy* is
-usually a rule with a detection bug, not a candidate for this.
+that a repo should have to ask for them. Six rules already ship off by default:
+the three param-mutation rules (`bare-arrow-param-prop-assign`,
+`deep-param-prop-assign`, `param-mutating-array-method-call`) and the three
+loop-ban rules (`no-while-statement`, `no-do-while-statement`,
+`no-for-statement`) — each is a house style, not a universal correctness fix. A
+rule that is simply *noisy* is usually a rule with a detection bug, not a
+candidate for this.
 
 Two things this does not change: an off-by-default rule still shows up in
 `registry.all()` (so `--help`/docs list it), and it still needs the full fixture
@@ -193,7 +203,7 @@ comment will not be where they expect it. Verify with
 
 ### The existing rules, and what each teaches
 
-There are eight rules today. The shape they all share is the walk below; the
+There are eleven rules today. The shape they all share is the walk below; the
 differences are in *which* node they cast to and how much of the semantic model
 they use.
 
@@ -225,6 +235,9 @@ fn check(&self, file: &FileContext) -> Vec<Violation> {
 | `reselect-arity-match` | `src/rules/reselect_arity_match.rs` | Call expressions, identifier vs member callees, parameter-list arity; the identifier callee is resolved semantically (same shared helper), the member-expression callee deliberately stays name-based |
 | `destructure-default-param-assign` / `destructure-param-prop-assign` / `bare-arrow-param-prop-assign` / `deep-param-prop-assign` | `src/rules/param_mutation.rs` (one file, four rules) | Assignment-target resolution via `model.resolve_assignment`, walking up arrow/function scopes to the parameter a mutation is rooted in, depth-bounded reporting |
 | `param-mutating-array-method-call` | `src/rules/param_mutating_array_method_call.rs` | Method-call detection with semantic resolution of the receiver |
+| `no-while-statement` | `src/rules/no_while_statement.rs` | Pure cast-and-report: walk `descendants()`, cast to `JsWhileStatement`, report at the `while` keyword. No semantic model. |
+| `no-do-while-statement` | `src/rules/no_do_while_statement.rs` | Same shape, cast to `JsDoWhileStatement`. |
+| `no-for-statement` | `src/rules/no_for_statement.rs` | Same shape, cast to `JsForStatement` only — `for...of`/`for...in` are distinct node kinds and out of scope. |
 
 ---
 
@@ -424,13 +437,20 @@ fn loop_body(loop_node: &JsSyntaxNode) -> Option<JsSyntaxNode> {
 
 ## Step-by-step checklist
 
+The snippets below use a placeholder rule named `no-example-rule`
+(`no_example_rule` / `NoExampleRule`). Substitute your real rule name (kebab-case
+for the `name`, underscores for the module/file). For a concrete, already-merged
+example of these exact edits, see the three loop-ban rules
+(`no-while-statement`, `no-do-while-statement`, `no-for-statement`) in
+`src/rules/`.
+
 ### 1. Create `src/rules/<rule_name>.rs`
 
 Implement the `Rule` trait exactly as above. Decide up front:
 
-- **Semantic model?** Only if you need identifier resolution. The three loop-ban
-  rules in `LOOP_STATEMENT_BAN_RULES_PLAN.md` need none — they are pure
-  cast-and-report.
+- **Semantic model?** Only if you need identifier resolution. The three
+  loop-ban rules (already in the repo) need none — they are pure cast-and-report;
+  `no-native-map` shows the opposite end, leaning heavily on the semantic model.
 - **`Fix`?** Only if the rewrite is unambiguous (see Autofix above). Existence
   bans attach none.
 - **`default_severity`?** Override to `Off` only for opinionated house-style
@@ -443,16 +463,14 @@ re-exports. Insert your three entries where they sort:
 
 ```rust
 pub mod no_arrow_function_create_selector;
-pub mod no_do_while_statement;                 // <- add (sorts after no_arrow_…)
-pub mod no_for_statement;                       // <- add
+pub mod no_example_rule;                        // <- add (your rule, alphabetical)
 pub mod no_native_map;
-pub mod no_while_statement;                     // <- add
+// …other rules, alphabetical…
 
 pub use no_arrow_function_create_selector::NoArrowFunctionCreateSelector;
-pub use no_do_while_statement::NoDoWhileStatement;       // <- add
-pub use no_for_statement::NoForStatement;               // <- add
+pub use no_example_rule::NoExampleRule;         // <- add
 pub use no_native_map::NoNativeMap;
-pub use no_while_statement::NoWhileStatement;           // <- add
+// …other re-exports, alphabetical…
 ```
 
 ### 3. Register in `src/rules/registry.rs`
@@ -461,18 +479,14 @@ This is the **only** registration point. Two edits — the `use`, and the vector
 in `with_all_rules`:
 
 ```rust
-use super::no_do_while_statement::NoDoWhileStatement;   // <- add
-use super::no_for_statement::NoForStatement;            // <- add
-use super::no_while_statement::NoWhileStatement;        // <- add
+use super::no_example_rule::NoExampleRule;              // <- add
 
 pub fn with_all_rules() -> Self {
     Self {
         rules: vec![
             Box::new(NoNativeMap),
             // …existing rules, alphabetical…
-            Box::new(NoDoWhileStatement),                // <- add
-            Box::new(NoForStatement),                    // <- add
-            Box::new(NoWhileStatement),                  // <- add
+            Box::new(NoExampleRule),                     // <- add
         ],
     }
 }
