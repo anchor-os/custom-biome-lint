@@ -682,13 +682,17 @@ suffix; a finding on a receiver named `fields`/`field` carries a `(low
 confidence: receiver named 'fields' may be a redux-form helper)` suffix.
 
 **Severity:** This rule is heuristic because it does not perform type inference.
-High-confidence findings indicate a method call that matches a known mutating
-Array API on a parameter and report at **error** severity. Low-confidence
-findings indicate a known API collision where the same method name may be
-non-mutating (an `immutable` import or a `fields`/`field` receiver); they keep
-the explanatory suffix and report at **warning** severity instead of
-**error** — still surfaced, but de-prioritized for triage. Both severities are
-capped by the rule's own off-by-default posture.
+Confidence determines each finding's *intrinsic* severity: high-confidence
+findings (a known mutating Array API on a parameter, with no collision signal)
+report at **error** severity, while low-confidence findings (a known API
+collision where the same method name may be non-mutating — an `immutable` import
+or a `fields`/`field` receiver) keep the explanatory suffix and report at
+**warning** severity instead — still surfaced, but de-prioritized for triage. A
+configured `"warn"` or `"error"` entry in `ignoreBiomeExtensionRules` overrides
+that intrinsic severity for *every* finding (so an opted-in `"error"` escalates
+low-confidence collisions to errors too). The rule's off-by-default posture is
+an **enablement gate** — without a config entry the rule does not run at all —
+not a severity cap on the findings it produces once enabled.
 
 **Source:** `src/rules/param_mutating_array_method_call.rs`
 
@@ -782,13 +786,16 @@ as warnings so they are visible but do not block a build the way an error would.
 
 ### Rollout recommendation
 
-Do **not** adopt this rule the way the assignment rules were (enable, `--write-fix`,
-blanket-suppress the old `eslint-disable`s). Generate a findings-review doc first
-and triage every finding — especially the low-confidence ones — by hand before
-adding any `custom-biome-ignore` comment. Auto-suppressing an Immutable.js
+Do **not** adopt this rule the way the assignment-shaped rules were (enable,
+`--write-fix`, blanket-suppress the old `eslint-disable`s). This rule ships
+**without** an automatic fix (see the table above) — the right copy shape
+(spread, deep clone, Immutable update) cannot be derived from the call site — so
+the caution here is specifically about *suppression*: generate a findings-review
+doc first and triage every finding, especially the low-confidence ones, by hand
+before adding any `custom-biome-ignore` comment. Auto-suppressing an Immutable.js
 `.push()` false positive reads as "yes, this is a real parameter mutation,
-intentionally allowed," which is actively misleading. `--write-fix` still works
-mechanically; the recommendation is a workflow caution, not a capability gap.
+intentionally allowed," which is actively misleading. The recommendation is a
+workflow caution about suppression, not a claim about fixer capability.
 
 ---
 

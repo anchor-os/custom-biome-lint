@@ -50,7 +50,7 @@ Checked `biome explain` against every plausibly-relevant rule name and swept
 the full rule list in `node_modules/@biomejs/biome/configuration_schema.json`
 for anything mentioning mutation, parameters, assignment, or method calls:
 
-```
+```text
 noAssignInExpressions, noCatchAssign, noClassAssign, noConstAssign,
 noDoneCallback, noDuplicateParameters, noEmptyTypeParameters,
 noExcessiveNestedCallbacks, noFunctionAssign, noGlobalAssign,
