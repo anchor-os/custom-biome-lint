@@ -23,6 +23,7 @@ use crate::rules::JS_EXTENSIONS;
 const MESSAGE: &str =
     "Avoid `while` loops — use functional iteration (e.g. `Array.prototype` methods) instead.";
 
+/// Reports `while` loop statements (existence ban, ships off by default).
 pub struct NoWhileStatement;
 
 impl Rule for NoWhileStatement {
@@ -42,6 +43,7 @@ impl Rule for NoWhileStatement {
         crate::config::RuleSeverity::Off
     }
 
+    /// Walks the parsed tree and reports every `JsWhileStatement`.
     fn check(&self, file: &FileContext) -> Vec<Violation> {
         let mut violations = Vec::new();
         for node in file.tree().descendants() {

@@ -803,7 +803,11 @@ workflow caution about suppression, not a claim about fixer capability.
 
 **Off by default.** See [Opting into the default-off rules](#opting-into-the-default-off-rules).
 
-**Message:** `Avoid `while` loops — use functional iteration (e.g. `Array.prototype` methods) instead.`
+**Message:**
+
+```
+Avoid `while` loops — use functional iteration (e.g. `Array.prototype` methods) instead.
+```
 
 **Severity:** Every finding reports at **error** severity once the rule is opted in. The rule is an existence ban with zero ambiguity, so there is no graduated severity.
 
@@ -823,7 +827,12 @@ while (queue.length > 0) {           // flagged
 queue.forEach(item => process(item)); // not flagged — no while statement
 ```
 
-### Before / after
+### Flagged vs. clean (illustrative, not a drop-in rewrite)
+
+Style illustrations, not equivalent replacements — `queue.shift()` mutates the
+queue as it runs, whereas `Array.prototype` methods do not (and the rule ships no
+autofix for exactly this reason). Prefer the functional form in new code; existing
+loops need a human rewrite or a suppression comment.
 
 ```js
 // ✗ Flagged — a serial while loop
@@ -833,7 +842,7 @@ while (queue.length > 0) {
 ```
 
 ```js
-// ✓ Clean — functional iteration
+// ✓ Clean — functional style (does not mutate the queue)
 const results = queue.map(process);
 ```
 
@@ -848,7 +857,11 @@ const results = queue.map(process);
 
 **Off by default.** See [Opting into the default-off rules](#opting-into-the-default-off-rules).
 
-**Message:** `Avoid `do...while` loops — use functional iteration (e.g. `Array.prototype` methods) instead.`
+**Message:**
+
+```
+Avoid `do...while` loops — use functional iteration (e.g. `Array.prototype` methods) instead.
+```
 
 **Severity:** Every finding reports at **error** severity once the rule is opted in. The rule is an existence ban with zero ambiguity, so there is no graduated severity.
 
@@ -856,7 +869,7 @@ const results = queue.map(process);
 
 ### What it catches
 
-Any `do { ... } while (...) ` statement.
+Any `do { ... } while (...)` statement.
 
 ```js
 do {                    // flagged
@@ -868,7 +881,11 @@ do {                    // flagged
 queue.forEach(item => process(item)); // not flagged — no do-while statement
 ```
 
-### Before / after
+### Flagged vs. clean (illustrative, not a drop-in rewrite)
+
+Style illustrations, not equivalent replacements — a `do...while` body always runs
+at least once, whereas the functional form may run zero times (and the rule ships
+no autofix for exactly this reason).
 
 ```js
 // ✗ Flagged — a do-while loop
@@ -878,7 +895,7 @@ do {
 ```
 
 ```js
-// ✓ Clean — functional iteration that may run zero or more times
+// ✓ Clean — functional style (may run zero or more times)
 const attempts = buildAttempts();
 const succeeded = attempts.find(success);
 ```
@@ -894,7 +911,11 @@ const succeeded = attempts.find(success);
 
 **Off by default.** See [Opting into the default-off rules](#opting-into-the-default-off-rules).
 
-**Message:** `Avoid classic `for` loops — use functional iteration (e.g. `Array.prototype` methods) instead.`
+**Message:**
+
+```
+Avoid classic `for` loops — use functional iteration (e.g. `Array.prototype` methods) instead.
+```
 
 **Severity:** Every finding reports at **error** severity once the rule is opted in. The rule is an existence ban with zero ambiguity, so there is no graduated severity.
 

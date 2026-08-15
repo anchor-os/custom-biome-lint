@@ -1,4 +1,4 @@
-//! Bans `do { ... } while (...) ` statements.
+//! Bans `do { ... } while (...)` statements.
 //!
 //! Part of the loop-statement ban family (see
 //! `docs/LOOP_STATEMENT_BAN_RULES_PLAN.md`). The old ESLint `no-restricted-syntax`
@@ -23,6 +23,7 @@ use crate::rules::JS_EXTENSIONS;
 const MESSAGE: &str =
     "Avoid `do...while` loops — use functional iteration (e.g. `Array.prototype` methods) instead.";
 
+/// Reports `do...while` loop statements (existence ban, ships off by default).
 pub struct NoDoWhileStatement;
 
 impl Rule for NoDoWhileStatement {
@@ -42,6 +43,7 @@ impl Rule for NoDoWhileStatement {
         crate::config::RuleSeverity::Off
     }
 
+    /// Walks the parsed tree and reports every `JsDoWhileStatement`.
     fn check(&self, file: &FileContext) -> Vec<Violation> {
         let mut violations = Vec::new();
         for node in file.tree().descendants() {

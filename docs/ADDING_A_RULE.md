@@ -45,7 +45,7 @@ All of the following must be true before you claim the task is done:
 | Tests pass | `cargo test` | the suite currently has **251** tests (94 unit + 156 integration + 1 doc-test) and must stay green; your new tests are additive |
 | No lint warnings | `cargo clippy --all-targets` | zero warnings (use `-- -D warnings` in CI to escalate) |
 | Release builds | `cargo build --release` | succeeds |
-| Fixtures behave | `./target/release/custom-biome-lint fixtures` | your rule reports `invalid.js`, stays silent on `valid.js` / `suppressed.js` / `edge-cases.js`; see [TESTING.md](TESTING.md) for the aggregate counts (they grow as rules are added) |
+| Fixtures behave | `./target/release/custom-biome-lint fixtures` | your rule reports `invalid.js` and the pinned violations in `edge-cases.js`; stays silent on `valid.js` / `suppressed.js`; see [TESTING.md](TESTING.md) for the aggregate counts (they grow as rules are added) |
 | Documented | — | a section in [RULES.md](RULES.md) |
 
 Do not report success on the basis of code that compiles. Run the gates. The
@@ -385,11 +385,13 @@ impl Rule for NoAwaitInLoop {
 fn is_in_loop_body(node: &JsSyntaxNode) -> bool {
     let mut child = node.clone();
     for ancestor in node.ancestors().skip(1) {
-        if is_loop(ancestor.kind()) {
-            return loop_body(&ancestor).is_some_and(|body| body == child);
-        }
         if is_function_boundary(ancestor.kind()) {
             return false;
+        }
+        if is_loop(ancestor.kind())
+            && loop_body(&ancestor).is_some_and(|body| body == child)
+        {
+            return true;
         }
         child = ancestor;
     }
