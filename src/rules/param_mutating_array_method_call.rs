@@ -32,7 +32,15 @@ use crate::semantic::{BindingKind, SemanticModel};
 /// (`list['push'](x)`) and the Map/Set-shaped `set`/`delete`/`clear`/`add`
 /// are deliberately excluded — see the plan's Non-goals.
 const MUTATING_METHODS: &[&str] = &[
-    "push", "pop", "shift", "unshift", "splice", "sort", "reverse", "fill", "copyWithin",
+    "push",
+    "pop",
+    "shift",
+    "unshift",
+    "splice",
+    "sort",
+    "reverse",
+    "fill",
+    "copyWithin",
 ];
 
 const MESSAGE: &str =
@@ -71,7 +79,8 @@ impl Rule for ParamMutatingArrayMethodCall {
                 continue;
             };
 
-            let (line, col) = file.line_col(usize::from(root.syntax().text_trimmed_range().start()));
+            let (line, col) =
+                file.line_col(usize::from(root.syntax().text_trimmed_range().start()));
 
             let low_confidence = low_confidence_marker(&root, imports_immutable);
             let message = match low_confidence {
@@ -156,10 +165,7 @@ fn file_imports_immutable(tree: &JsSyntaxNode) -> bool {
 /// A short annotation for findings where the receiver might not actually be a
 /// mutating array — surfaced in the message, not used to gate the finding.
 /// `None` means the finding is a plain-array candidate and has no such doubt.
-fn low_confidence_marker(
-    root: &JsReferenceIdentifier,
-    imports_immutable: bool,
-) -> Option<String> {
+fn low_confidence_marker(root: &JsReferenceIdentifier, imports_immutable: bool) -> Option<String> {
     let value_token = root.value_token().ok()?;
     let name = value_token.text_trimmed();
     if imports_immutable {

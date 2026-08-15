@@ -433,7 +433,9 @@ mod param_mutating_array_method_call {
         let violations = check_source(RULE, source, Path::new("a.js"));
         assert_eq!(violations.len(), 1, "got {violations:?}");
         assert!(
-            violations[0].message.contains("low confidence: file imports 'immutable'"),
+            violations[0]
+                .message
+                .contains("low confidence: file imports 'immutable'"),
             "got {:?}",
             violations[0].message
         );
