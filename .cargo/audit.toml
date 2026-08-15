@@ -1,13 +1,14 @@
 [advisories]
 # RUSTSEC-2026-0173: proc-macro-error2 is unmaintained.
 #
-# Pulled in transitively by biome_deserialize_macros, biome_diagnostics_macros,
-# biome_markup and biome_console — all proc-macro crates from Biome 2.5.8
-# (consumed as a git dependency, see Cargo.toml). There is no newer release
+# Pulled in transitively by Biome's procedural-macro crates
+# (biome_deserialize_macros, biome_diagnostics_macros, biome_markup), consumed
+# from the Biome git dependency (see Cargo.toml). There is no newer release
 # upstream that drops proc-macro-error2, and Biome itself is pinned to a git
 # rev, so the only fix is a future upstream Biome release.
 #
-# Not a runtime concern: all of these are (proc-macro) dependencies, meaning
-# they run only during `cargo build` to generate code — none ship inside the
-# compiled custom-biome-lint binary.
+# Scope of the risk: proc-macro-error2 is used by procedural macros, so it is
+# NOT linked into the compiled custom-biome-lint binary. It does still execute
+# on the build host while those macros are compiled, so it has build-time (not
+# runtime) access to the machine running `cargo build`.
 ignore = ["RUSTSEC-2026-0173"]
