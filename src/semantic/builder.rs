@@ -411,6 +411,7 @@ impl Builder {
                             }
                         }
                         AnyJsObjectBindingPatternMember::JsBogusBinding(_) => {}
+                        AnyJsObjectBindingPatternMember::JsMetavariable(_) => {}
                     }
                 }
             }

@@ -15,20 +15,16 @@ path = "src/lib.rs"
 name = "custom-biome-lint"
 path = "src/bin/custom-biome-lint.rs"
 
-# Pinned exactly: biome_rowan 0.5.8 is a breaking change (SyntaxKind::is_trivia,
-# reshaped FileSourceError) that biome_js_syntax 0.5.7 does not compile against,
-# and semver unification otherwise pulls 0.5.8 in transitively.
-#
-# biome_parser, biome_diagnostics and biome_console are not used directly. They
-# are listed only to hold the whole graph at 0.5.7: without them cargo resolves
-# them to 0.5.8, which fails to build against rowan 0.5.7.
+# Biome is consumed from git: the standalone `biome_js_parser`/`biome_js_syntax`
+# crates on crates.io are frozen at 0.5.7 (pre-1.0), which cannot parse `$`-prefixed
+# identifiers (e.g. the Cypress `$el` convention). Modern Biome (1.x/2.x) is only
+# published via the monorepo, so we pin all three crates to one commit to keep the
+# graph unified. Only the parser/source/rowan crates are used directly.
 [dependencies]
-biome_js_parser = "=0.5.7"
-biome_js_syntax = "=0.5.7"
-biome_rowan = "=0.5.7"
-biome_parser = "=0.5.7"
-biome_diagnostics = "=0.5.7"
-biome_console = "=0.5.7"
+biome_js_parser = { git = "https://github.com/biomejs/biome", rev = "6b8f09c04394f2a9f72b89f9381724681169641a" }
+biome_js_syntax = { git = "https://github.com/biomejs/biome", rev = "6b8f09c04394f2a9f72b89f9381724681169641a" }
+biome_rowan = { git = "https://github.com/biomejs/biome", rev = "6b8f09c04394f2a9f72b89f9381724681169641a" }
+biome_languages = { git = "https://github.com/biomejs/biome", rev = "6b8f09c04394f2a9f72b89f9381724681169641a" }
 serde_json = "1"
 rayon = "1.7"
 

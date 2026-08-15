@@ -494,7 +494,7 @@ impl<'a> JsxText<'a> {
 fn node_at_offset(tree: &JsSyntaxNode, offset: usize) -> Option<JsSyntaxNode> {
     let mut best: Option<(usize, JsSyntaxNode)> = None;
     for node in tree.descendants() {
-        let range = node.text_range();
+        let range = node.text_range_with_trivia();
         let start = usize::from(range.start());
         let end = usize::from(range.end());
         // Skip empty ranges: a zero-width node (e.g. an empty directive list at

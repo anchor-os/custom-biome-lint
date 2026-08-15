@@ -2,7 +2,8 @@ use std::cell::OnceCell;
 use std::path::Path;
 
 use biome_js_parser::{parse, JsParserOptions};
-use biome_js_syntax::{JsFileSource, JsSyntaxNode};
+use biome_js_syntax::JsSyntaxNode;
+use biome_languages::JsFileSource;
 
 use crate::diagnostics::Violation;
 use crate::rules::Rule;
@@ -126,3 +127,31 @@ fn line_starts(source: &str) -> Vec<usize> {
     }
     starts
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    /// Cypress step definitions use `$`-prefixed identifiers (the `$el`
+    /// convention for aliased subjects, e.g. `cy.then(($el) => { ... })`).
+    /// Biome < 1.0 rejected these as identifiers, which made every such file
+    /// emit a spurious parse-error warning. Modern Biome (2.x) must accept them.
+    #[test]
+    fn dollar_prefixed_identifiers_parse_cleanly() {
+        let src = "cy.then(($el) => {\n  expect($el).to.exist;\n});\n";
+        let ctx = FileContext::parse(src, Path::new("stepDefinitions/foo.cy.js"));
+        assert!(
+            ctx.parsed_cleanly(),
+            "expected $-prefixed identifiers (Cypress $el) to parse cleanly"
+        );
+
+        let src2 = "const $a = 1;\nconst f = ($el) => $el + 1;\n";
+        let ctx2 = FileContext::parse(src2, Path::new("a.js"));
+        assert!(
+            ctx2.parsed_cleanly(),
+            "expected $-prefixed identifiers to parse cleanly"
+        );
+    }
+}
+
