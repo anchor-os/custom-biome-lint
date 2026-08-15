@@ -190,9 +190,10 @@ collapses both to `None`, which is right for overriding a violation's severity
 and wrong for deciding whether the rule runs at all.
 
 Reach for this when a rule's findings are opinionated or style-contingent enough
-that a repo should have to ask for them — `bare-arrow-param-prop-assign` and
-`deep-param-prop-assign` are the only two rules that do (see
-[RULES.md](RULES.md#opting-into-the-two-default-off-rules)); the first is
+that a repo should have to ask for them — `bare-arrow-param-prop-assign`,
+`deep-param-prop-assign`, and `param-mutating-array-method-call` are the only
+three rules that do (see
+[RULES.md](RULES.md#opting-into-the-three-default-off-rules)); the first is
 meaningless in a repo that parenthesizes arrow parameters, and the second flags a
 pattern some codebases use deliberately. A rule that is simply *noisy* is usually
 a rule with a detection bug, not a candidate for this.

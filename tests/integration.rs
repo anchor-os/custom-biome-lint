@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use custom_biome_lint::{lint_source, PackageConfig, Rule, RuleRegistry, RuleSeverity, Violation};
+use custom_biome_lint::{
+    lint_source, PackageConfig, Rule, RuleRegistry, RuleSeverity, Severity, Violation,
+};
 
 fn fixture(rule_dir: &str, name: &str) -> (PathBuf, String) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -48,6 +50,7 @@ fn registry_exposes_every_rule() {
             "destructure-param-prop-assign",
             "no-arrow-function-create-selector",
             "no-native-map",
+            "param-mutating-array-method-call",
             "reselect-arity-match"
         ]
     );
@@ -67,7 +70,11 @@ fn only_the_opt_in_rules_default_to_off() {
     off.sort();
     assert_eq!(
         off,
-        vec!["bare-arrow-param-prop-assign", "deep-param-prop-assign"]
+        vec![
+            "bare-arrow-param-prop-assign",
+            "deep-param-prop-assign",
+            "param-mutating-array-method-call"
+        ]
     );
 }
 
@@ -360,6 +367,142 @@ mod reselect_arity_match {
     }
 }
 
+mod param_mutating_array_method_call {
+    use super::*;
+
+    const RULE: &str = "param-mutating-array-method-call";
+    const DIR: &str = "param_mutating_array_method_call";
+
+    #[test]
+    fn valid_patterns_are_allowed() {
+        assert!(check_one(RULE, DIR, "valid.js").is_empty());
+    }
+
+    #[test]
+    fn mutating_calls_on_parameters_are_reported() {
+        let violations = check_one(RULE, DIR, "invalid.js");
+        assert_eq!(violations.len(), 7, "got {violations:?}");
+        assert!(violations.iter().all(|v| v.rule == RULE));
+        // High-confidence findings are errors.
+        assert!(
+            violations.iter().all(|v| v.severity == Severity::Error),
+            "high-confidence findings must be errors: {violations:?}"
+        );
+        // The original surfaced instance, reported at the parameter use site.
+        let first = violations
+            .iter()
+            .find(|v| v.line == 2)
+            .expect("productsData.push(product) on line 2");
+        assert_eq!(first.col, 3, "anchors on the parameter name, not the dot");
+    }
+
+    #[test]
+    fn suppression_comments_silence_the_rule() {
+        assert!(check_one(RULE, DIR, "suppressed.js").is_empty());
+    }
+
+    /// A non-mutating same-named method must never fire — the precision
+    /// boundary the rule lives or dies by.
+    #[test]
+    fn non_mutating_methods_are_not_flagged() {
+        let source = "function f(list) {\n  return list.map(x => x * 2).filter(Boolean);\n}\n";
+        assert!(check_source(RULE, source, Path::new("a.js")).is_empty());
+    }
+
+    /// A local copy, not the parameter, is mutated — out of scope by design.
+    #[test]
+    fn a_local_copy_is_not_flagged() {
+        let source = "function f(list, item) {\n  const copy = [...list];\n  copy.push(item);\n  return copy;\n}\n";
+        assert!(check_source(RULE, source, Path::new("a.js")).is_empty());
+    }
+
+    /// Aliasing is the same non-goal the assignment rules carry: the receiver
+    /// resolves to the local binding, not the parameter.
+    #[test]
+    fn an_aliased_parameter_is_not_flagged() {
+        let source = "function f(list, item) {\n  const local = list;\n  local.push(item);\n}\n";
+        assert!(check_source(RULE, source, Path::new("a.js")).is_empty());
+    }
+
+    /// Bracket-form calls are a v1 non-goal and must not be matched.
+    #[test]
+    fn computed_member_calls_are_not_flagged() {
+        let source = "function f(list, item) {\n  list['push'](item);\n}\n";
+        assert!(check_source(RULE, source, Path::new("a.js")).is_empty());
+    }
+
+    /// The immutable.js false-positive risk surfaces as a low-confidence
+    /// warning, never as suppression and never as a plain error.
+    #[test]
+    fn immutable_import_is_a_low_confidence_warning() {
+        let source =
+            "import { Map } from 'immutable';\nfunction f(pricelists, id) {\n  return pricelists.push(Map({ id }));\n}\n";
+        let violations = check_source(RULE, source, Path::new("a.js"));
+        assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert_eq!(violations[0].severity, Severity::Warning);
+        assert!(
+            violations[0]
+                .message
+                .contains("low confidence: file imports 'immutable'"),
+            "got {:?}",
+            violations[0].message
+        );
+    }
+
+    /// An `immutable` package subpath (`immutable/...`) is still the same
+    /// module and must earn the low-confidence warning too.
+    #[test]
+    fn immutable_subpath_import_is_a_low_confidence_warning() {
+        let source =
+            "import { Map } from 'immutable/dist/immutable.es.js';\nfunction f(pricelists, id) {\n  return pricelists.push(Map({ id }));\n}\n";
+        let violations = check_source(RULE, source, Path::new("a.js"));
+        assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert_eq!(violations[0].severity, Severity::Warning);
+        assert!(
+            violations[0]
+                .message
+                .contains("low confidence: file imports 'immutable'"),
+            "got {:?}",
+            violations[0].message
+        );
+    }
+
+    /// The redux-form `fields` convention is a separate low-confidence signal,
+    /// visible even when the file does not import immutable.
+    #[test]
+    fn redux_form_fields_name_is_a_low_confidence_warning() {
+        let source = "function f(fields) {\n  fields.push('');\n}\n";
+        let violations = check_source(RULE, source, Path::new("a.js"));
+        assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert_eq!(violations[0].severity, Severity::Warning);
+        assert!(
+            violations[0]
+                .message
+                .contains("low confidence: receiver named 'fields'"),
+            "got {:?}",
+            violations[0].message
+        );
+    }
+
+    /// A plain-array parameter named `fields` still fires as a low-confidence
+    /// warning (the marker is heuristic, not a gate) — pins the documented edge
+    /// case.
+    #[test]
+    fn a_plain_array_fields_parameter_still_fires_as_a_warning() {
+        let source = "function f(fields) {\n  fields.push(1);\n}\n";
+        let violations = check_source(RULE, source, Path::new("a.js"));
+        assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert_eq!(violations[0].severity, Severity::Warning);
+    }
+
+    /// Map/Set-shaped method names are excluded from v1 entirely.
+    #[test]
+    fn set_method_is_not_in_scope() {
+        let source = "function f(product) {\n  return product.set('name', 'x');\n}\n";
+        assert!(check_source(RULE, source, Path::new("a.js")).is_empty());
+    }
+}
+
 mod config {
     use super::*;
 
@@ -490,8 +633,8 @@ mod patterns {
         let discovered = discover_files(&pattern, manifest_dir());
         assert_eq!(
             discovered.files.len(),
-            28,
-            "expected 4 fixtures for each of 7 rules, got {:?}",
+            32,
+            "expected 4 fixtures for each of 8 rules, got {:?}",
             discovered.files
         );
     }
@@ -500,7 +643,7 @@ mod patterns {
     fn explicit_glob_is_passed_through_unchanged() {
         let pattern = resolve_pattern("fixtures/**/invalid.js", manifest_dir(), "js,jsx");
         assert_eq!(pattern.raw(), "fixtures/**/invalid.js");
-        assert_eq!(discover_files(&pattern, manifest_dir()).files.len(), 7);
+        assert_eq!(discover_files(&pattern, manifest_dir()).files.len(), 8);
     }
 
     #[test]
