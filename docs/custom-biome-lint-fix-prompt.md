@@ -1,7 +1,7 @@
 # Prompt for the custom-biome-lint repo session
 
 Paste everything below into a fresh Claude Code session with the `custom-biome-lint` repo
-checked out. Written from real integration testing against the `dashboard` monorepo (v0.1.1),
+checked out. Written from real integration testing against the `<PRIVATE_REPO>` monorepo (v0.1.1),
 not speculation — every claim below was reproduced.
 
 > **Historical record, not current status.** This is the prompt as written at
@@ -23,7 +23,7 @@ not speculation — every claim below was reproduced.
 
 ## Context
 
-`custom-biome-lint` is being integrated into a consumer project (`dashboard`) as a vendored
+`custom-biome-lint` is being integrated into a consumer project (`<PRIVATE_REPO>`) as a vendored
 Rust source tree, built via an explicit script rather than an npm `postinstall` (to avoid
 requiring the Rust toolchain on every `yarn install`). During that integration, two real bugs
 surfaced, plus one open design question. Fix the two bugs; the third item just needs a decision
@@ -101,7 +101,7 @@ the moment this ships — identical in kind to the "renaming a rule is breaking"
 semver looseness, but call it out loudly in whatever changelog/release notes exist — this is
 not a patch).
 
-For existing consumers (the `dashboard` integration currently has exactly 8 suppression
+For existing consumers (the `<PRIVATE_REPO>` integration currently has exactly 8 suppression
 comments written with the old marker, all `no-native-map` on `mapboxgl.Map` call sites — added
 via `--write-fix` before this bug was found): the mechanical fix on the consumer side is a
 straight find-and-replace of `biome-ignore-line` → `custom-biome-ignore-line` and
@@ -122,7 +122,7 @@ a line to `MIGRATION_NOTES.md`-equivalent docs for other consumers doing the sam
 # succeeds normally, "cache saved at .custom-biome-lint-cache"
 
 # 2. Immediately after, a run against a small, different file set:
-./custom-biome-lint '{src/App.jsx,src/auth/azure.js,src/auth/okta.js}' -vv
+./custom-biome-lint '{src/Example.jsx,src/auth/example.js,src/auth/example.js}' -vv
 ```
 
 Step 2's `-vv` output correctly shows `discovered 3 file(s) from 4730 considered across 830
@@ -170,7 +170,7 @@ check specifically, one of the two documented primary use cases in `docs/CI_CD_I
 Current `package.json` ships one prebuild-free path (`postinstall: cargo build --release`),
 which is honest but means every consumer needs the Rust toolchain to `yarn add -D
 custom-biome-lint`, which mostly defeats the point of publishing to npm at all (a
-Rust-toolchain-having consumer could just vendor the source, which is what the `dashboard`
+Rust-toolchain-having consumer could just vendor the source, which is what the `<PRIVATE_REPO>`
 integration is doing specifically to sidestep this).
 
 `docs/PUBLISH_TO_NPM.md` already lays out the options table (build-on-install / os-cpu-guard /

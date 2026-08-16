@@ -138,7 +138,7 @@ All components are **thread-safe by design**:
 
 ```
 Hardware: 4-core CPU (M2 MacBook)
-Codebase: dashboard/src/ (4393 files)
+Codebase: <PRIVATE_REPO>/src/ (4393 files)
 
 Sequential (baseline):    ~2.4s
 Parallel (theoretical):   ~2.4s / 4 = 0.6s

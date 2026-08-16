@@ -1,7 +1,7 @@
 # Extracting custom-biome-lint to its own repository
 
-The tool currently lives inside the dashboard repo at `custom-biome-lint/`. It has
-no dependency on the dashboard — it is a self-contained Cargo project — so it can
+The tool currently lives inside the <PRIVATE_REPO> repo at `custom-biome-lint/`. It has
+no dependency on the <PRIVATE_REPO> — it is a self-contained Cargo project — so it can
 be lifted out as-is.
 
 Do this when a second project needs the tool. Until then, the in-repo copy is
@@ -15,12 +15,12 @@ simpler: one clone, one CI pipeline, no version skew.
 
 ## 1. Copy the directory out
 
-Copy to a location **outside** the dashboard working tree, so the parent repo's
+Copy to a location **outside** the <PRIVATE_REPO> working tree, so the parent repo's
 `.git` and `.gitignore` are not inherited:
 
 ```sh
 cp -R \
-  /path/to/dashboard/custom-biome-lint \
+  /path/to/<PRIVATE_REPO>/custom-biome-lint \
   ~/src/custom-biome-lint
 
 cd ~/src/custom-biome-lint
@@ -42,16 +42,16 @@ cargo build --release
 ./target/release/custom-biome-lint fixtures
 ```
 
-If that passes outside the dashboard tree, there are no hidden dependencies.
+If that passes outside the <PRIVATE_REPO> tree, there are no hidden dependencies.
 [TESTING.md](TESTING.md) covers this portability check in more detail.
 
 ## 2. Create the GitLab project
 
-The dashboard lives at `gitlab.com:hornblower/dashboard.git`, so the natural home
+The <PRIVATE_REPO> lives at `<private-<PRIVATE_REPO>-repo>`, so the natural home
 is the same group:
 
 ```
-gitlab.com/hornblower/custom-biome-lint
+<this-repo>
 ```
 
 Create it through the GitLab UI (**New project → Create blank project**) with the
@@ -64,8 +64,8 @@ own group below if you are putting it elsewhere.
 cd ~/src/custom-biome-lint
 git init
 git add .
-git commit -m "feat: initial extraction of custom-biome-lint from dashboard"
-git remote add origin git@gitlab.com:hornblower/custom-biome-lint.git
+git commit -m "feat: initial extraction of custom-biome-lint from <PRIVATE_REPO>"
+git remote add origin git@gitlab.com:<this-repo>.git
 git push -u origin main
 ```
 
@@ -83,14 +83,14 @@ repository = "https://github.com/anchor/custom-biome-lint"
 Correct it to the real remote, and add the same field to `package.json`:
 
 ```toml
-repository = "https://gitlab.com/hornblower/custom-biome-lint"
+repository = "https://<this-repo>"
 ```
 
 ```json
 {
   "repository": {
     "type": "git",
-    "url": "https://gitlab.com/hornblower/custom-biome-lint.git"
+    "url": "https://<this-repo>.git"
   }
 }
 ```
@@ -203,10 +203,10 @@ Stay on `0.x` until the rule set has settled.
 The existing `README.md` is already standalone and points into `docs/`. Two edits
 after extraction:
 
-1. Replace dashboard-relative paths with repo-relative ones.
+1. Replace <PRIVATE_REPO>-relative paths with repo-relative ones.
 2. Add a line near the top explaining where it came from and who consumes it:
 
-   > Extracted from the Hornblower dashboard, where it runs alongside Biome to
+   > Extracted from the internal project it originated from, where it runs alongside Biome to
    > cover Reselect/Redux patterns Biome does not implement. See
    > `docs/INTEGRATION_GUIDE.md` to add it to a project.
 
@@ -222,13 +222,13 @@ URL and a personal access token as the password.
 Mirror in one direction only. A two-way mirror on a repo people actually commit to
 produces conflicts that are tedious to unpick.
 
-## After extraction: the dashboard side
+## After extraction: the <PRIVATE_REPO> side
 
-The dashboard now needs to consume the tool rather than contain it. Pick one:
+The <PRIVATE_REPO> now needs to consume the tool rather than contain it. Pick one:
 
 - **Submodule** — [USE_AS_GIT_SUBMODULE.md](USE_AS_GIT_SUBMODULE.md)
 - **npm dependency** — [PUBLISH_TO_NPM.md](PUBLISH_TO_NPM.md)
 
 Then follow [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md) to wire up scripts, CI,
-and the pre-push hook. Do not delete `custom-biome-lint/` from the dashboard until
+and the pre-push hook. Do not delete `custom-biome-lint/` from the <PRIVATE_REPO> until
 the replacement runs green in CI.

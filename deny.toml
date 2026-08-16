@@ -7,11 +7,16 @@ all-features = false
 no-default-features = false
 
 [advisories]
-# Mirrors .cargo/audit.toml: proc-macro-error is unmaintained, but it is a
-# build-time-only proc-macro dependency pulled in transitively by Biome
-# crates pinned to =0.5.7 (see Cargo.toml), with no upstream fix available.
+# Mirrors .cargo/audit.toml. Biome's procedural-macro crates
+# (biome_deserialize_macros, biome_diagnostics_macros, biome_markup) transitively
+# pull in proc-macro-error2, which is unmaintained with no safe upgrade
+# (RUSTSEC-2026-0173). It is used by procedural macros, so it is NOT linked into
+# the compiled custom-biome-lint binary — but it still executes on the build host
+# while those macros are compiled, giving it build-time (not runtime) access.
+# Biome itself is pinned to a git rev (see Cargo.toml), so the only fix is an
+# upstream Biome release that drops proc-macro-error2.
 ignore = [
-    { id = "RUSTSEC-2024-0370", reason = "unmaintained proc-macro-error, build-time-only, transitive via biome_* pinned to =0.5.7 — see .cargo/audit.toml" },
+    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2: build-time-only proc-macro used by biome_* macros, unmaintained, transitive, no safe upgrade" },
 ]
 
 [licenses]
@@ -27,6 +32,13 @@ allow = [
     "MIT-0",
     "Zlib",
     "Unlicense",
+]
+# option-ext (MPL-2.0) is the only copyleft-licensed crate in the graph — a
+# benign build-time dependency pulled in transitively by Biome 2.5.8. It is
+# scoped here rather than widening the global allow list to MPL-2.0, so any
+# other crate introducing MPL-2.0 would still fail this check.
+exceptions = [
+    { name = "option-ext", version = "0.2.0", allow = ["MPL-2.0"] },
 ]
 confidence-threshold = 0.8
 
@@ -45,3 +57,10 @@ wildcards = "deny"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Biome is consumed as a git dependency (see Cargo.toml); allow this one git
+# source so the supply-chain check knows it's an expected, reviewed source.
+allow-git = ["https://github.com/biomejs/biome"]
+# Every allowed git dependency must be pinned to an immutable `rev` (commit),
+# not a moving branch or tag, so the check rejects git deps that could change
+# underneath us. Biome is pinned by `rev` in Cargo.toml.
+required-git-spec = "rev"

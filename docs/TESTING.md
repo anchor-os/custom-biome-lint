@@ -7,7 +7,7 @@ From fastest to most realistic:
 3. `cargo clippy --all-targets` — lint the linter
 4. `cargo audit` / `cargo deny check` — dependency advisories, licenses, sources
 5. Run the binary against `fixtures/` — known-good end-to-end check
-6. Run the binary against the real dashboard `src/` tree — parity check
+6. Run the binary against the real <PRIVATE_REPO> `src/` tree — parity check
 
 Plus a one-off portability check documented at the end.
 
@@ -208,9 +208,9 @@ Verify the exit code, since CI depends on it:
 | 1 | Violations found |
 | 2 | Bad usage, or the pattern's root directory does not exist |
 
-## 6. Against the real dashboard tree
+## 6. Against the real <PRIVATE_REPO> tree
 
-Run from `UI/dashboard` (the directory containing `src/`), pointing at the built
+Run from `<your-repo>` (the directory containing `src/`), pointing at the built
 binary:
 
 ```sh
@@ -222,7 +222,7 @@ Quote the glob so the shell does not expand it first.
 Expected: **8 errors in 8 files**, all `no-native-map`.
 
 ```
-src/components/AddExternalEvents/ExternalEventForm.jsx
+src/components/Example.jsx
   173:30  error  Use Immutable.js Map instead of native Map.  no-native-map
 ...
 ✖ 8 errors in 8 files
@@ -236,7 +236,7 @@ All 8 findings are **expected and pre-existing**. Each one:
   ESLint rule, which could not distinguish a member-expression `.Map` from the
   global `Map` (see [RULES.md](RULES.md))
 - sits exactly one line below an existing
-  `// eslint-disable-next-line customPlugin/no-native-map` comment
+  `// eslint-disable-next-line legacy-eslint-plugin/no-native-map` comment
 
 That second point is the parity evidence: 8 findings, 8 pre-existing
 suppressions, each adjacent. To re-verify it yourself:
@@ -307,8 +307,9 @@ How it was done:
 
 ```sh
 # Copy everything except build output to a location outside the repository
+LINT_SRC=/path/to/custom-biome-lint
 rsync -a --exclude 'target/' \
-  /path/to/UI/dashboard/custom-biome-lint/ \
+  "$LINT_SRC"/ \
   /tmp/portability-check/custom-biome-lint/
 
 cd /tmp/portability-check/custom-biome-lint
@@ -325,7 +326,7 @@ stale artifact was carrying a dependency the manifest does not declare.
 
 What this establishes:
 
-- No path dependencies or workspace inheritance from the dashboard repo
+- No path dependencies or workspace inheritance from the <PRIVATE_REPO> repo
 - The committed `Cargo.lock` reproduces the pinned `0.5.7` Biome graph correctly
   (see the version-pinning section in [ARCHITECTURE.md](ARCHITECTURE.md))
 - Nothing reads from the surrounding repository. The only external input is the

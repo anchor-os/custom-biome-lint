@@ -8,7 +8,7 @@ then [RULES.md](RULES.md).
 
 A standalone Rust binary that lints JavaScript/JSX for three Redux/Reselect/
 Immutable patterns that Biome has no equivalent for. It exists because the
-dashboard's migration from ESLint to Biome 2.5.5 would otherwise silently drop
+<PRIVATE_REPO>'s migration from ESLint to Biome 2.5.5 would otherwise silently drop
 three custom ESLint rules that guard against real, silent bugs.
 
 It is **not** a Biome plugin. Biome 2.5.5 has no plugin API, so this runs as an
@@ -90,7 +90,7 @@ know `analyze_file` exists. That is a real readability cost, accepted knowingly.
 
 ### What it buys
 
-**Measured** at the time, running against the dashboard's `src/` (4393 files,
+**Measured** at the time, running against the <PRIVATE_REPO>'s `src/` (4393 files,
 warm cache) — a private tree not available in this repo, so treat this as a
 historical data point rather than something you can reproduce directly.
 `scripts/benchmark.sh` (see [BENCHMARKING.md](BENCHMARKING.md)) is a

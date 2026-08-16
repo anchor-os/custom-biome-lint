@@ -1,7 +1,7 @@
 # Bug: `--write-fix` can emit a suppression Biome's own formatter later breaks
 
 Discovered during real-world use: rolling out `bare-arrow-param-prop-assign`
-and `deep-param-prop-assign` on the `hornblower/UI/dashboard` monorepo (218
+and `deep-param-prop-assign` on the `<PRIVATE_REPO>` monorepo (218
 findings, `--write-fix` then a full `biome check --write src cypress` format
 pass). Of 218 auto-placed suppressions, **9 were silently detached from their
 violation by the formatter pass**, plus one case where `--write-fix`'s own
@@ -11,8 +11,8 @@ way it surfaced was re-running `custom-biome-lint` after the format pass and
 noticing violations that should have been gone.
 
 This is the same *class* of bug as the `no-native-map` / mapboxgl.Map false
-positive documented in the dashboard repo's own
-`.vscode/vite-for-dashboard/rebase-and-biome-triage-guide.md` (gotcha #4): a
+positive documented in the <PRIVATE_REPO> repo's own
+`.vscode/vite-for-<PRIVATE_REPO>/<PRIVATE_GUIDE>.md` (gotcha #4): a
 suppression comment that is textually correct at the moment it's written, but
 whose correctness depends on an assumption (here: "the formatter will not
 move this token") that isn't checked.
@@ -54,7 +54,7 @@ tool in this rule's own recommended workflow."
 ## Concrete examples
 
 All from the same commit
-(`hornblower/UI/dashboard`, `36a7ade3ff4a9e32c5e0d6e4342abfc5c37b31a9`,
+(`<PRIVATE_REPO>`, `<PRIVATE_COMMIT>`,
 message `feat: enable bare-arrow-param-prop-assign and deep-param-prop-assign`)
 and the manual fixups applied on top of it during that rollout. "Broken"
 below is the state after `--write-fix` followed by `biome check --write` —
@@ -67,7 +67,7 @@ trailing placement is not wrong in general, only wrong for multi-line
 targets.
 
 ```js
-// src/components/InteractiveDashboard/InteractiveDashboard.jsx — final, stable
+// src/components/Example.jsx — final, stable
 toolbar.getTabs = function () {
   const exportTab = tabs.find(({ title }) => title === 'Export') || {};
   (exportTab.menu || []).forEach(option => {
@@ -134,17 +134,17 @@ beforeToolbarCreated = toolbar => {
 ```
 
 Same shape, three more occurrences in the same rollout:
-`src/components/DailyFlashReport/DailyFlashReport.jsx` (×2, inside JSX
+`src/components/Example.jsx` (×2, inside JSX
 `beforeToolbarCreated={toolbar => { ... }}` props — see Case 3),
-`src/components/InteractiveDashboard/InteractiveDashboard.jsx:195`,
-`src/components/ReportViewer/ReportViewer.jsx:221` (both the
+`src/components/Example.jsx:195`,
+`src/components/Example.jsx:221` (both the
 `toolbar.getTabs = function () { ... }` shape, non-arrow but same multi-line
 body problem).
 
 ### Case 2 — object literal property, multi-line assignment target
 
 ```js
-// src/selectors/eventBuilder.js — violation line is `accum[routeId][eventId] = {`
+// src/selectors/example.js — violation line is `accum[routeId][eventId] = {`
 if (!(accum[routeId] || {}).hasOwnProperty(eventId)) {
   accum[routeId][eventId] = {
     eventId,
@@ -187,7 +187,7 @@ needlessly used, and — combined with Case 1's line-drift — produces an inert
 placement:
 
 ```js
-// src/components/DailyFlashReport/DailyFlashReport.jsx — after --write-fix
+// src/components/Example.jsx — after --write-fix
 beforeToolbarCreated={toolbar => {
   const tabs = toolbar.getTabs();
   {
@@ -217,9 +217,9 @@ beforeToolbarCreated={toolbar => {
 }}
 ```
 
-Same shape at `src/components/InteractiveDashboard/InteractiveDashboard.jsx`
+Same shape at `src/components/Example.jsx`
 (a `beforeToolbarCreated` prop) and twice in
-`src/components/ManageOnlineShop/OnlineStoreOrdersTable.jsx` (an `onChange`
+`src/components/Example.jsx` (an `onChange`
 prop's arrow body):
 
 ```js
@@ -345,7 +345,7 @@ Not a formatter-relocation bug, but the same root problem (adjacency is
 assumed stable, isn't checked against a second suppression system) and it
 surfaced in the same rollout, on the same line, so it belongs in this report.
 
-`src/selectors/billingDashboard.js` already carried a ported
+`src/selectors/example.js` already carried a ported
 `biome-ignore lint/style/noParameterAssign` comment (from an earlier,
 separate migration) directly above the target line. `--write-fix` inserted
 its own leading comment **between** that `biome-ignore` and the code:
@@ -500,7 +500,7 @@ Three independent gaps, all in this function:
    `biome format --write`) runs next, does the suppression still land on the
    right line?" Since this tool's suppression syntax is specifically
    documented to coexist with Biome (`biome-ignore` ports exist right next
-   to `custom-biome-ignore` markers throughout the dashboard codebase), and
+   to `custom-biome-ignore` markers throughout the <PRIVATE_REPO> codebase), and
    every consumer's real workflow is "run `--write-fix`, then run Biome's
    formatter," that combined sequence is the thing that actually needs to
    stay verified — not `--write-fix`'s output in isolation.
@@ -540,7 +540,7 @@ because:
   JS/JSX construct Biome's formatter might reflow differently in the future
   (template literals, JSX attribute lists, arrow chaining, decorators…);
   "is the statement single-line" already generalizes over all of them.
-- The dashboard rollout this bug came from produced correct results for
+- The <PRIVATE_REPO> rollout this bug came from produced correct results for
   *zero* multi-line targets using trailing form — every one of the 9 breaks
   was a multi-line target. There is no evidence in this corpus that trailing
   placement is worth the risk for anything but single-line statements.
@@ -668,7 +668,7 @@ Written so a fresh session with no other context can pick this up.
    (previously buggy) now get own-line.
 8. **Integration sanity check against the real corpus that found this bug.**
    ⏳ **Manual verification step for the reviewer** (read-only against
-   `hornblower/UI/dashboard`); not a code change in this repo.
+   `<PRIVATE_REPO>`); not a code change in this repo.
 9. **Run the existing suite (`cargo test && cargo clippy --all-targets`)**
    before considering this done. ✅ **Done in PR #27** — 126 tests pass,
    clippy clean.

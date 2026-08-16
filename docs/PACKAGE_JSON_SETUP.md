@@ -1,6 +1,6 @@
 # package.json setup and dependency management
 
-Field-by-field reference for both sides: the **consumer** (the dashboard, or any
+Field-by-field reference for both sides: the **consumer** (the <PRIVATE_REPO>, or any
 project running the linter) and the **tool** (custom-biome-lint's own manifest).
 
 For the surrounding workflow see [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md); for
@@ -10,7 +10,7 @@ CI specifics see [CI_CD_INTEGRATION.md](CI_CD_INTEGRATION.md).
 
 ## A. Consumer package.json
 
-### Current state of the dashboard
+### Current state of the <PRIVATE_REPO>
 
 Worth being precise, because the target state below is not what is in the repo
 today:

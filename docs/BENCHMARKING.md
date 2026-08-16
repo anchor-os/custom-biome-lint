@@ -2,7 +2,7 @@
 
 `scripts/benchmark.sh` is a re-runnable benchmark harness, replacing what used
 to be a one-off, hand-typed measurement in `docs/ARCHITECTURE.md` against a
-private, 4393-file dashboard tree that isn't available in this repo. The
+private, 4393-file <PRIVATE_REPO> tree that isn't available in this repo. The
 script builds its own synthetic corpus instead, so anyone with this repo
 checked out can reproduce the numbers below (or get their own, if the
 machine or Rust toolchain differs).
@@ -79,7 +79,7 @@ violations** (see `src/cache/mod.rs`). A corpus built entirely from
 mistake — never marks anything valid, so "warm" silently measures the exact
 same thing as "cold" with no indication anything was wrong. 90/10 approximates
 the realistic case this cache targets: most files in a real tree are clean;
-a few always have violations (RULES.md notes real dashboard runs found 8
+a few always have violations (RULES.md notes real <PRIVATE_REPO> runs found 8
 pre-existing, already-suppressed violations out of thousands of files).
 
 ## Caveats

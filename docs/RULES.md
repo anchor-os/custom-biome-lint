@@ -66,7 +66,7 @@ resolves the most import/alias forms against the semantic model)
 
 ### What it catches
 
-The dashboard's entire Redux state tree is Immutable.js. Mixing a native `Map`
+The <PRIVATE_REPO>'s entire Redux state tree is Immutable.js. Mixing a native `Map`
 into that tree breaks equality checks (Immutable's structural equality does not
 apply), breaks `toJS()` conversion, and violates the purity assumptions reducers
 are written against. The failure is silent — no error, just wrong behaviour in
@@ -275,7 +275,7 @@ matching the original rule's reach exactly is what the parity guarantee requires
 
 ### Real-codebase findings
 
-**0 violations** across the dashboard's 141 `createSelector` call sites. The
+**0 violations** across the <PRIVATE_REPO>'s 141 `createSelector` call sites. The
 ESLint rule has kept this clean, and this port confirms it stays clean.
 
 ---
@@ -466,7 +466,7 @@ Property or index writes (dot or bracket, **any depth**) through a binding
 introduced by destructuring in a parameter list — the destructuring equivalent
 of `noParameterAssign`'s `propertyAssignment: "deny"` check.
 
-This is the rule the dashboard's saga and reducer layer needs: those functions
+This is the rule the <PRIVATE_REPO>'s saga and reducer layer needs: those functions
 are built almost entirely around destructured `action`/`payload`/`state`
 parameters, and an in-place write on one destructured field silently corrupts
 state a sibling saga or reducer reads later.
@@ -546,7 +546,7 @@ The cause is structural, not a formatter setting: an arrow with a single
 unparenthesized parameter binds it directly under the arrow as an
 `AnyJsBinding`, with no `JsParameters` node — unlike `(d) => ...`,
 `(a, b) => ...` and `function f(d) {}`, all of which Biome handles. A repo
-formatting with `arrowParentheses: "asNeeded"` (as the dashboard does) just
+formatting with `arrowParentheses: "asNeeded"` (as the <PRIVATE_REPO> does) just
 makes the missed shape the common one; Biome's formatter actively strips the
 parens its own checker needs.
 
@@ -665,7 +665,7 @@ item => {
 };
 ```
 
-On the dashboard, 21 lines trip both rules; the rest trip exactly one.
+On the <PRIVATE_REPO>, 21 lines trip both rules; the rest trip exactly one.
 
 ---
 
@@ -745,7 +745,7 @@ export const buildProductsData = ({ productsData }, product) => {
 Unlike the four assignment rules, whose property-assignment targets are
 *unambiguously* mutations, `x.push(...)` only mutates `x` when `x` is a native
 `Array` at runtime — which this tool cannot determine from syntax alone. Two
-pervasive same-named, **non-mutating** idioms in codebases like the dashboard
+pervasive same-named, **non-mutating** idioms in codebases like the <PRIVATE_REPO>
 reuse these exact method names:
 
 - **Immutable.js** (`Immutable.List#push`, `Immutable.Map#set`, …) returns a new
@@ -753,7 +753,7 @@ reuse these exact method names:
 - **Redux-Form's `FieldArray` `fields` helper** (`fields.push()`, `fields.remove()`)
   dispatches actions rather than mutating a plain array.
 
-In scoping against the dashboard corpus, roughly half of the raw mutating-method
+In scoping against the <PRIVATE_REPO> corpus, roughly half of the raw mutating-method
 calls on parameters turned out to be one of these two idioms. The rule therefore
 ships **off by default** and, when enabled, treats the two findings differently:
 
@@ -773,7 +773,7 @@ as warnings so they are visible but do not block a build the way an error would.
 
 - **Map/Set-shaped method names (`set`, `delete`, `clear`, `add`) are entirely
   out of scope for v1.** Every sampled `set`/`delete`/`add` call on the
-  dashboard turned out to be Immutable.js; a name-based rule over them would
+  <PRIVATE_REPO> turned out to be Immutable.js; a name-based rule over them would
   round to near-zero true positives, so no companion rule is proposed.
 - **Bracket/computed calls** (`list['push'](item)`) — rare enough in practice to
   not model in v1.
@@ -991,101 +991,9 @@ unconfigured, because that is what unconfigured means for them.
 
 ---
 
-## Real-codebase findings summary
+## Validation
 
-### The original three rules
-
-Run against the dashboard's `src/` tree
-(`custom-biome-lint 'src/**/*.{js,jsx}'`):
-
-```
-✖ 8 errors in 8 files
-```
-
-All 8 are `no-native-map`. All 8 are **pre-existing and already suppressed under
-ESLint** — every one sits on a line that already carries
-`// eslint-disable-next-line customPlugin/no-native-map`. All 8 are the
-`new mapboxgl.Map()` false-positive class described above.
-
-| File | Reported line | Existing disable comment |
-| --- | --- | --- |
-| `src/components/AddExternalEvents/ExternalEventForm.jsx` | 173:30 | line 172 |
-| `src/components/CompassDashboardV2/Map.js` | 17:30 | line 16 |
-| `src/components/FacilitiesManager/GeofenceEditor.jsx` | 82:30 | line 81 |
-| `src/components/FacilitiesManager/LocationPicker.jsx` | 36:30 | line 35 |
-| `src/components/MapBuilder/MapCanvas.jsx` | 120:30 | line 119 |
-| `src/components/POIManager/tabs/LocationTab.jsx` | 109:30 | line 108 |
-| `src/sagas/fetchResourceCapacityForVessel.js` | 99:24 | line 98 |
-| `src/sagas/manageSagaCancellation.js` | 11:25 | line 10 |
-
-**Positional parity is verified**: in every case the reported line is exactly one
-past the existing `eslint-disable-next-line` comment, which is precisely where
-ESLint was suppressing a finding. That one-to-one correspondence — 8 findings, 8
-pre-existing suppressions, each adjacent — is the evidence that the port
-reproduces the original rule's behaviour rather than approximating it.
-
-**These 8 comments need translating** from ESLint syntax to this tool's syntax
-when ESLint is removed. The tool deliberately does not read `eslint-disable*`
-comments. See [MIGRATION_NOTES.md](MIGRATION_NOTES.md) for the exact diff.
-
-Note the migration plan (`biome-migration.md`) refers to "9 active suppressions".
-That count is off by one: a repo-wide search finds exactly 8
-`eslint-disable-next-line customPlugin/no-native-map` comments in `src/`, matching
-the 8 findings one-for-one. The only other file mentioning the rule name is
-`scripts/rebuildEslintDisables.js`, which references it as a string in tooling
-rather than suppressing anything. Treat 8 as the real number.
-
-### The four assignment-shaped parameter-mutation rules
-
-Run against the dashboard's `src/` and `cypress/` trees (4,416 files) with both
-opt-in rules enabled, at dashboard commit `be48c6d81`:
-
-`param-mutating-array-method-call` (the call-shaped fifth rule) is deliberately
-absent from this tally: its dashboard corpus scoping lives in
-`docs/PARAM_MUTATING_METHOD_CALL_RULE_PLAN.md`, and — unlike the four rules
-above — it was scoped *before* being built rather than verified against a prior
-`eslint-disable` baseline, because the dashboard's removed `no-param-reassign`
-never reached `CallExpression`s at all.
-
-| Rule | Findings | Files |
-| --- | --- | --- |
-| `destructure-default-param-assign` | 4 | 4 |
-| `destructure-param-prop-assign` | 8 | 7 |
-| `bare-arrow-param-prop-assign` | 81 | 31 |
-| `deep-param-prop-assign` | 137 | 34 |
-
-**Positional parity with the removed ESLint rule is the verification here, the
-same way adjacency to existing `eslint-disable` comments verified
-`no-native-map`'s port.** 222 of the 230 findings (96%) land on a line that
-already carries an `eslint-disable`/`eslint-disable-next-line` for
-`no-param-reassign` — i.e. on precisely the lines the dashboard's own ESLint
-setup was suppressing before the rule was removed. 21 lines trip both opt-in
-rules, consistent with the documented decision to let them fire independently.
-
-The 8 findings *not* on a previously-suppressed line were each read by hand and
-are all genuine:
-
-- 5 in `src/components/VesselAddEdit/index.js` sit under an inline
-  `/*eslint no-param-reassign: ["error", { "props": false }]*/` comment, which
-  turned ESLint's property check off for the rest of that file. This tool
-  deliberately does not read `eslint-*` comments, so it reports them; they want
-  a `custom-biome-ignore` marker if that local decision still stands.
-- 1 in `src/lib/datadog/dogapi/api/metric.js` (`metrics[i].points = ...`) and
-  2 others are depth-2 writes in code ESLint was not covering.
-
-Two notes for anyone re-running this:
-
-- The scoping estimates in
-  `DESTRUCTURED_PARAM_MUTATION_RULES_PLAN.md` (~13 / ~69 / ~32) were derived by
-  counting existing `eslint-disable` comments and bucketing them by cause. The
-  rules report every occurrence, not only previously-suppressed ones, and a
-  single line can belong to more than one bucket — which is why
-  `deep-param-prop-assign` lands at 137 rather than ~32. The 98%
-  already-suppressed rate for that rule is what rules out over-firing as the
-  explanation.
-- `bare-arrow-param-prop-assign`'s count is a direct function of the dashboard's
-  `arrowParentheses: "asNeeded"` formatting. A repo that parenthesizes arrow
-  parameters has no use for that rule at all, which is why it ships off.
+Rules are validated with the `fixtures/<rule_name>/` suite (`valid.js`, `invalid.js`, `suppressed.js`, `edge-cases.js`) for the rules that run by default, and with the Rust unit tests (`cargo test`), which exercise every rule including the six that ship off by default. The fixture behaviour is documented below.
 
 ## Fixtures
 
@@ -1109,10 +1017,10 @@ fixture files, each a deliberate, documented behavior rather than a bug:
 | `destructure-default-param-assign` | 5 | 17 |
 | `destructure-param-prop-assign` | 5 | 14 |
 
-`valid.js` and `suppressed.js` contribute nothing. The two opt-in rules
-contribute nothing either — they are off in this repo's own `package.json`, so
-their fixtures are exercised by `cargo test` (which runs a named rule directly)
-rather than by a CLI run over `fixtures/`.
+`valid.js` and `suppressed.js` contribute nothing. The six off-by-default rules
+contribute nothing to this CLI run either — they are off in this repo's own
+`package.json`, so their fixtures are exercised by `cargo test` (which runs a
+named rule directly) rather than by a CLI run over `fixtures/`.
 
 Four `valid.js` files carry a `custom-biome-ignore` marker naming the *other*
 rule of a pair: a near-miss for one rule is often a genuine finding for its
