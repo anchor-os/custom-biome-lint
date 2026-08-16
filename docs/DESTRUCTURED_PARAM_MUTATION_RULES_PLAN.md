@@ -869,7 +869,7 @@ end-to-end by following this list in order.
     deserves the same documentation treatment `ADDING_A_RULE.md` gives every
     other trait method.
 17. **Integration sanity check against the real <PRIVATE_REPO>.** Run
-    `custom-biome-lint 'src/**/*.{js,jsx}' 'cypress/**/*.{js,jsx}'` against
+    `custom-biome-lint      '{src,cypress}/**/*.{js,jsx}'` against
     the <PRIVATE_REPO> repo with rules 3 & 4 enabled via
     `ignoreBiomeExtensionRules` set to `"error"` for both, and compare the
     finding count/positions against the 186-line source list in

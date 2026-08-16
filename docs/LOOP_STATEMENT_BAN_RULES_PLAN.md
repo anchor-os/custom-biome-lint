@@ -336,8 +336,8 @@ exists.
    `./target/release/custom-biome-lint fixtures` (exits `1` by design — the
    fixtures contain deliberate violations; CI wraps it in `test "$code" -eq 1`).
    Verify reported positions with `fixtures --write-fix --dry-run`.
-8. Integration sanity check: build the tool, then in the <PRIVATE_REPO> repo
-   (`<PRIVATE_REPO>/.claude/worktrees/vite-for-<PRIVATE_REPO>`),
+8. Integration sanity check: build the tool, then, from the <PRIVATE_REPO> repository
+    root (or a worktree of it),
    temporarily set `"ignoreBiomeExtensionRules": { "no-while-statement":
    "error", "no-do-while-statement": "error", "no-for-statement": "error" }`
    and run `custom-biome-lint` against `src/**/*.{js,jsx}` — confirm the

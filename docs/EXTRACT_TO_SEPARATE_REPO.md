@@ -206,7 +206,7 @@ after extraction:
 1. Replace <PRIVATE_REPO>-relative paths with repo-relative ones.
 2. Add a line near the top explaining where it came from and who consumes it:
 
-   > Extracted from the Hornblower <PRIVATE_REPO>, where it runs alongside Biome to
+   > Extracted from the internal project it originated from, where it runs alongside Biome to
    > cover Reselect/Redux patterns Biome does not implement. See
    > `docs/INTEGRATION_GUIDE.md` to add it to a project.
 

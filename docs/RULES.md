@@ -993,7 +993,7 @@ unconfigured, because that is what unconfigured means for them.
 
 ## Validation
 
-Every rule is validated with the `fixtures/<rule_name>/` suite (`valid.js`, `invalid.js`, `suppressed.js`, `edge-cases.js`) and the Rust unit tests (`cargo test`). The fixture behaviour is documented below.
+Rules are validated with the `fixtures/<rule_name>/` suite (`valid.js`, `invalid.js`, `suppressed.js`, `edge-cases.js`) for the rules that run by default, and with the Rust unit tests (`cargo test`), which exercise every rule including the six that ship off by default. The fixture behaviour is documented below.
 
 ## Fixtures
 
@@ -1017,10 +1017,10 @@ fixture files, each a deliberate, documented behavior rather than a bug:
 | `destructure-default-param-assign` | 5 | 17 |
 | `destructure-param-prop-assign` | 5 | 14 |
 
-`valid.js` and `suppressed.js` contribute nothing. The two opt-in rules
-contribute nothing either — they are off in this repo's own `package.json`, so
-their fixtures are exercised by `cargo test` (which runs a named rule directly)
-rather than by a CLI run over `fixtures/`.
+`valid.js` and `suppressed.js` contribute nothing. The six off-by-default rules
+contribute nothing to this CLI run either — they are off in this repo's own
+`package.json`, so their fixtures are exercised by `cargo test` (which runs a
+named rule directly) rather than by a CLI run over `fixtures/`.
 
 Four `valid.js` files carry a `custom-biome-ignore` marker naming the *other*
 rule of a pair: a near-miss for one rule is often a genuine finding for its

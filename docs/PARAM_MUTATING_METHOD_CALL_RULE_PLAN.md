@@ -525,10 +525,10 @@ was implemented and merged behind PR #26.
    `cargo test && cargo clippy --all-targets` pass.
 8. ✅ `docs/RULES.md` updated with the rule's section (precision tradeoff,
    low-confidence signal, rollout caveat, non-goals) and the opt-in example.
-9. ⚠️ Not run against the live <PRIVATE_REPO> corpus (separate repo, not available in
-   this environment). The <PRIVATE_REPO> tally in `docs/RULES.md` deliberately excludes
-   this rule and points here for its scoping; the ~251 estimate remains the
-   expected ballpark should it be run.
+9. ⏳ Live-corpus validation against the <PRIVATE_REPO> is still pending (separate
+    repo, not available in this environment). The rule is implemented and merged;
+    `docs/RULES.md` documents it with the opt-in workflow. The ~251 estimate remains
+    the expected ballpark should it be run.
 10. ✅ No automated `--write-fix` rollout built; the rule ships off by default with
     a documented manual-triage-before-suppression workflow.
 

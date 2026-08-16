@@ -77,7 +77,7 @@ rules is worse than a slow build.
 Local development needs the same one-time step:
 
 ```sh
-cd <your-repo>/custom-biome-lint && cargo build --release
+cd custom-biome-lint && cargo build --release
 ```
 
 Developers without Rust installed will need it — see [SETUP.md](SETUP.md). This is

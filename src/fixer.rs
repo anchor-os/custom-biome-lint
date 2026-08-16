@@ -500,6 +500,10 @@ fn node_at_offset(tree: &JsSyntaxNode, offset: usize) -> Option<JsSyntaxNode> {
         // Skip empty ranges: a zero-width node (e.g. an empty directive list at
         // the very start of the file) would otherwise beat the real token that
         // also covers the offset.
+        //
+        // Tie-break: keep the smallest covering range (the most specific node).
+        // On equal length the first match wins, which is the outermost node —
+        // `descendants()` yields in pre-order, so the result is deterministic.
         if start < end && start <= offset && offset <= end {
             let len = end - start;
             match best {

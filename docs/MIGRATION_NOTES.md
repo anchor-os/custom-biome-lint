@@ -70,7 +70,7 @@ Biome on the same files, sharing that prefix was a real collision. As of
 **This is a breaking change.** The moment a project upgrades to v0.2.0 or later,
 every suppression comment still written with the old marker becomes invisible to
 the tool — the violation it was silencing reappears. This is mechanical to fix
-and safe to automate, since renaming a marker string never changes what it means:
+and broadly safe to automate, since renaming a marker string never changes what it means — but the guard above only skips already-migrated markers, so manually review any hit that is not a known `custom-biome-ignore` payload before trusting it:
 
 ```sh
 matches=$(grep -rlE '[^-]biome-ignore-(line|next-line)' src --include="*.js" --include="*.jsx" || true)

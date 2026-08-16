@@ -307,8 +307,9 @@ How it was done:
 
 ```sh
 # Copy everything except build output to a location outside the repository
+LINT_SRC=/path/to/custom-biome-lint
 rsync -a --exclude 'target/' \
-  /path/to/<your-repo>/custom-biome-lint/ \
+  "$LINT_SRC"/ \
   /tmp/portability-check/custom-biome-lint/
 
 cd /tmp/portability-check/custom-biome-lint

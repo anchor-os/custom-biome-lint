@@ -32,7 +32,7 @@ severity.
 | `deep-param-prop-assign` | **off** | Plain-parameter mutation 2+ levels deep — `function f(acc) { acc[x][y] = 1 }` — beyond Biome's one-level limit. |
 | `no-for-statement` | **off** | Classic three-clause `for (init; test; update) { ... }` loops. Part of the "no loops, use functional iteration" house style; `for...of` / `for...in` are out of scope. |
 | `no-while-statement` | **off** | `while (...) { ... }` loops. Same house style as the loop bans. |
-| `no-do-while-statement` | **off** | `do { ... } while (...) ` loops. Same house style as the loop bans. |
+| `no-do-while-statement` | **off** | `do { ... } while (...)` loops. Same house style as the loop bans. |
 | `param-mutating-array-method-call` | **off** | Array-mutating method calls (`push`, `pop`, `shift`, `unshift`, `splice`, `sort`, `reverse`, `fill`, `copyWithin`) on a parameter — `param.push(item)`. Name-based; companion to the parameter-mutation rules. |
 
 The first three `on` rules are direct ports of the corresponding rules in

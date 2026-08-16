@@ -251,7 +251,7 @@ The sequence to put in the project's contributing guide:
 ```sh
 # 1. Clone with submodules (Option 1; plain clone otherwise).
 git clone --recurse-submodules git@gitlab.com:your-org/your-app.git
-cd <PRIVATE_REPO>
+cd your-app
 
 # Already cloned without them?
 git submodule update --init --recursive

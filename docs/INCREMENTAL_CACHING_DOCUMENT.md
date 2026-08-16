@@ -245,7 +245,7 @@ found it clean, the cache correctly skips re-analyzing all of them:
 
 ```bash
 custom-biome-lint 'src/**/*.{js,jsx}'                              # large run, caches everything clean
-custom-biome-lint '{src/Example.jsx,src/auth/example.js,src/auth/example.js}' # small, overlapping run
+custom-biome-lint '{src/Example.jsx,src/auth/example.js,src/sagas/example.js}' # small, overlapping run
 # ✔ No violations found (0 files checked, 3 skipped via cache in 5ms)
 ```
 
