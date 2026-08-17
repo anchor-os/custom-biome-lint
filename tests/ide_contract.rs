@@ -276,10 +276,43 @@ fn apply_edits(source: &str, edits: &[custom_biome_lint::Edit]) -> Result<String
         if e.end_line == 0 || e.end_line > starts.len() {
             return Err(format!("end line {} out of range", e.end_line));
         }
-        let s = starts[e.start_line - 1] + e.start_column.saturating_sub(1);
-        let en = starts[e.end_line - 1] + e.end_column.saturating_sub(1);
-        if s > source.len() || en > source.len() || s > en {
-            return Err(format!("edit offset out of range: {s}..{en}"));
+        // Columns are 1-based; reject a zero (or would-be underflow) column.
+        if e.start_column == 0 {
+            return Err(format!(
+                "start_column must be 1-based, got {}",
+                e.start_column
+            ));
+        }
+        if e.end_column == 0 {
+            return Err(format!("end_column must be 1-based, got {}", e.end_column));
+        }
+        // Bound each offset to its own line: the first byte of the next line is
+        // the highest valid offset (it is the insertion point just before the
+        // line terminator), and the end of the last line is `source.len()`.
+        let start_line_end = if e.start_line < starts.len() {
+            starts[e.start_line]
+        } else {
+            source.len()
+        };
+        let end_line_end = if e.end_line < starts.len() {
+            starts[e.end_line]
+        } else {
+            source.len()
+        };
+        let line_start = starts[e.start_line - 1];
+        let s = line_start + e.start_column - 1;
+        let en = starts[e.end_line - 1] + e.end_column - 1;
+        if s < line_start || s > start_line_end || !source.is_char_boundary(s) {
+            return Err(format!(
+                "start offset {s} invalid for line {}",
+                e.start_line
+            ));
+        }
+        if en < starts[e.end_line - 1] || en > end_line_end || !source.is_char_boundary(en) {
+            return Err(format!("end offset {en} invalid for line {}", e.end_line));
+        }
+        if s > en {
+            return Err(format!("edit range inverted: {s}..{en}"));
         }
         spans.push((s, en, e.replacement.clone()));
     }
