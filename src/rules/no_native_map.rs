@@ -44,8 +44,7 @@ impl Rule for NoNativeMap {
             let (line, col) = file.line_col(start);
             let (end_line, end_col) = file.line_col(end);
             violations.push(
-                Violation::error(self.name(), line, col, MESSAGE)
-                    .with_end((end_line, end_col)),
+                Violation::error(self.name(), line, col, MESSAGE).with_end((end_line, end_col)),
             );
         }
 

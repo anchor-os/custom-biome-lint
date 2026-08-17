@@ -2,7 +2,8 @@ use std::io::Write;
 use std::path::Path;
 
 use custom_biome_lint::{
-    lint_source, fixer::{plan_file, Placement}, RuleRegistry, RuleSeverity, Severity, Violation,
+    fixer::{plan_file, Placement},
+    lint_source, RuleRegistry, RuleSeverity, Severity, Violation,
 };
 
 fn check_source(rule_name: &str, source: &str) -> Vec<Violation> {
@@ -45,7 +46,8 @@ fn line_only_rules_have_no_end() {
 /// byte ranges as `--auto-fix`.
 #[test]
 fn safe_fix_emitted_for_arrow_selector() {
-    let source = "import { createSelector } from 'reselect';\nconst sel = () => createSelector(a, b);\n";
+    let source =
+        "import { createSelector } from 'reselect';\nconst sel = () => createSelector(a, b);\n";
     let violations = check_source("no-arrow-function-create-selector", source);
     assert_eq!(violations.len(), 1);
     let v = &violations[0];
@@ -85,8 +87,16 @@ fn rule_metadata_is_complete() {
     assert_eq!(names.len(), 11);
     for rule in registry.all() {
         assert!(!rule.name().is_empty());
-        assert!(!rule.description().is_empty(), "{} needs a description", rule.name());
-        assert!(!rule.supported_extensions().is_empty(), "{} needs extensions", rule.name());
+        assert!(
+            !rule.description().is_empty(),
+            "{} needs a description",
+            rule.name()
+        );
+        assert!(
+            !rule.supported_extensions().is_empty(),
+            "{} needs extensions",
+            rule.name()
+        );
         let _ = rule.default_severity();
     }
 }
@@ -189,7 +199,12 @@ fn diagnostics_build_without_enrichment() {
         .into_iter()
         .filter(|r| r.name() == "no-native-map")
         .collect();
-    let violations = lint_source("const m = new Map();\n", Path::new("demo.js"), &rules, false);
+    let violations = lint_source(
+        "const m = new Map();\n",
+        Path::new("demo.js"),
+        &rules,
+        false,
+    );
     assert_eq!(violations.len(), 1);
     assert!(violations[0].fixes.is_empty());
     assert!(violations[0].suppressions.is_empty());
@@ -201,7 +216,12 @@ fn diagnostics_build_without_enrichment() {
 #[test]
 fn suppression_edit_preserves_crlf() {
     let source = format!("const x = {}; const m = new Map();\r\n", "a".repeat(100));
-    let violation = Violation::error("no-native-map", 1, 1, "Use Immutable.js Map instead of native Map.");
+    let violation = Violation::error(
+        "no-native-map",
+        1,
+        1,
+        "Use Immutable.js Map instead of native Map.",
+    );
     let plan = plan_file(Path::new("demo.js"), &source, &[violation]);
     let own_line = plan
         .changes

@@ -525,7 +525,11 @@ fn run_stdin(
     config: &PackageConfig,
     registry: &RuleRegistry,
 ) -> ExitCode {
-    let path = PathBuf::from(args.pattern.clone().expect("stdin requires a path (validated)"));
+    let path = PathBuf::from(
+        args.pattern
+            .clone()
+            .expect("stdin requires a path (validated)"),
+    );
 
     let mut source = String::new();
     if let Err(error) = std::io::stdin().read_to_string(&mut source) {
@@ -543,7 +547,10 @@ fn run_stdin(
 
     let mut reports = Vec::new();
     if !analyzed.violations.is_empty() {
-        reports.push(FileReport::new(display_path(&path, cwd), analyzed.violations));
+        reports.push(FileReport::new(
+            display_path(&path, cwd),
+            analyzed.violations,
+        ));
     }
 
     let mut totals = tally(&reports, 1, 0);
