@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 
 pub use file_matcher::GlobSet;
-pub use runner::{analyze_file, AnalyzedFile, FileContext};
+pub use runner::{analyze_file, analyze_file_enriched, AnalyzedFile, FileContext};
 
 /// Directories never worth walking into.
 const SKIPPED_DIRS: &[&str] = &[

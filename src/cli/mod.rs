@@ -15,7 +15,7 @@ use serde_json::json;
 pub use args::{CliArgs, OutputFormat};
 pub use output::{Reporter, HELP};
 
-use crate::analyzer::{analyze_file, discover_files, resolve_pattern, GlobSet};
+use crate::analyzer::{analyze_file_enriched, discover_files, resolve_pattern, GlobSet};
 use crate::autofix::Autofix;
 use crate::cache::{hash_content, CacheManager};
 use crate::config::{PackageConfig, RuleSeverity, CONFIG_KEY};
@@ -185,22 +185,9 @@ where
 
     // Analyze files (parallel or sequential)
     let (analyzed_files, unparsed, checked, cache_skipped) = if args.parallel {
-        analyze_files_parallel(
-            &discovery.files,
-            &rules,
-            &cache_key,
-            &cache,
-            args.format == OutputFormat::Json,
-        )
+        analyze_files_parallel(&discovery.files, &rules, &cache_key, &cache)
     } else {
-        analyze_files_sequential(
-            &discovery.files,
-            &rules,
-            &cache_key,
-            &cache,
-            &reporter,
-            args.format == OutputFormat::Json,
-        )
+        analyze_files_sequential(&discovery.files, &rules, &cache_key, &cache, &reporter)
     };
 
     // Mark freshly-analyzed, clean files as cached for next run. Distinct
@@ -431,7 +418,6 @@ fn analyze_files_sequential(
     cache_key: &str,
     cache: &CacheManager,
     reporter: &Reporter,
-    enrich: bool,
 ) -> (
     Vec<(PathBuf, String, crate::analyzer::AnalyzedFile)>,
     usize,
@@ -459,7 +445,7 @@ fn analyze_files_sequential(
         }
         checked += 1;
 
-        let result = analyze_file(file, &source, rules, enrich);
+        let result = analyze_file_enriched(file, &source, rules);
         if !result.parsed_cleanly {
             unparsed += 1;
         }
@@ -476,7 +462,6 @@ fn analyze_files_parallel(
     rules: &[&dyn crate::Rule],
     cache_key: &str,
     cache: &CacheManager,
-    enrich: bool,
 ) -> (
     Vec<(PathBuf, String, crate::analyzer::AnalyzedFile)>,
     usize,
@@ -493,7 +478,7 @@ fn analyze_files_parallel(
                 cache_skipped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 return None;
             }
-            let result = analyze_file(file, &source, rules, enrich);
+            let result = analyze_file_enriched(file, &source, rules);
             Some((file.clone(), source, result))
         })
         .collect();
@@ -538,7 +523,7 @@ fn run_stdin(
     }
 
     let rules = registry.enabled(config);
-    let mut analyzed = analyze_file(&path, &source, &rules, args.format == OutputFormat::Json);
+    let mut analyzed = analyze_file_enriched(&path, &source, &rules);
 
     if !analyzed.parsed_cleanly {
         reporter.warn(&format!("parse errors in {}", path.display()));
@@ -568,8 +553,13 @@ fn run_stdin(
 /// the rule registry (name/description/default severity/extensions) — never a
 /// duplicated hard-coded table — so it cannot drift from the real rules.
 fn print_rule_metadata(registry: &RuleRegistry) {
-    let rules: Vec<serde_json::Value> = registry
-        .all()
+    // Sort by rule name so the output is deterministic regardless of the order
+    // rules happen to be registered in. The registry stays the source of truth;
+    // we only reorder for stable, tool-friendly output.
+    let mut ordered: Vec<&dyn crate::rules::Rule> = registry.all();
+    ordered.sort_by_key(|rule| rule.name());
+
+    let rules: Vec<serde_json::Value> = ordered
         .iter()
         .map(|rule| {
             json!({

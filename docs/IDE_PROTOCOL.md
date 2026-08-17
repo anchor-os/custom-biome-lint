@@ -84,12 +84,42 @@ Field rules:
   (omitted from JSON) for line-only rules. When present they are 1-based
   line/byte-column, and `endColumn >= startColumn` on the same line.
 - `severity` — `error` or `warning`.
+- `path` — present on each `files[]` entry (the file the violations belong to),
+  **not** repeated on every violation. IDEs should read `files[].path` for the
+  location context of a violation.
 - `fixes` — zero or more **safe** fixes. Currently only `kind: "safe"`. Each
   `Edit` reuses the exact byte range Biome-style autofix would touch, so
   applying the edit is equivalent to running `--auto-fix` for that violation.
 - `suppressions` — zero or more suppression edits. Applying an edit adds the
   matching `custom-biome-ignore-line` / `custom-biome-ignore-next-line`
   comment, identical to `--write-fix`.
+
+### Coordinate convention
+
+All line/column coordinates in this contract use the **same** convention,
+whether they appear on a diagnostic or on an `Edit`:
+
+- **Lines are 1-based.** The first line of the file is line `1`.
+- **Columns are 1-based byte offsets** in the UTF-8 source, **not** character
+  (Unicode scalar) offsets. A multi-byte character (e.g. `é`, `你`, `😀`)
+  advances the column by its byte length, so an IDE must convert byte columns to
+  its own display/character model when rendering.
+- **Spans are half-open** (`[startColumn, endColumn)`): `startColumn` is the
+  byte column of the first byte of the span, and `endColumn` is one past the
+  last byte. The example above (`Map` at column 15, length 3) yields
+  `startColumn: 15`, `endColumn: 18`. An insertion (e.g. a trailing
+  suppression comment) has `startColumn == endColumn` — a zero-width range at
+  the insertion point.
+- Conversions an IDE will need:
+  - `byte_offset = line_start[line - 1] + (column - 1)`
+  - `column = byte_offset - line_start[line - 1] + 1`
+  - `line_start` is the byte offset of the first byte of each line (line 1
+    starts at offset `0`).
+
+This convention is tested directly (see `tests/ide_contract.rs`, the Unicode
+and end-to-end fix/suppression tests), including sources that contain non-ASCII
+characters before the diagnostic and before a fix range.
+
 
 ### `Edit` shape
 

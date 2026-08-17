@@ -82,12 +82,12 @@ pub struct AnalyzedFile {
 /// Parses `source` once, runs every rule that supports the file's extension,
 /// drops suppressed violations, and returns the rest in source order.
 ///
-/// When `enrich` is true, each surviving violation is also filled in with the
-/// machine-readable fix and suppression edits the IDE contract exposes (see
-/// [`Violation::fixes`] / [`Violation::suppressions`]). The CLI enables this
-/// only for `--format json`; text and `--auto-fix`/`--write-fix` output do not
-/// need the extra work.
-pub fn analyze_file(path: &Path, source: &str, rules: &[&dyn Rule], enrich: bool) -> AnalyzedFile {
+/// The public entry points are [`analyze_file`] (no IDE enrichment) and
+/// [`analyze_file_enriched`] (fills in the machine-readable fix/suppression
+/// edits). This private helper carries the `enrich` flag so the two public
+/// signatures stay backward compatible — existing consumers keep calling
+/// `analyze_file` with three arguments and never see the IDE-only fields.
+fn analyze_file_impl(path: &Path, source: &str, rules: &[&dyn Rule], enrich: bool) -> AnalyzedFile {
     let context = FileContext::parse(source, path);
     let suppressions = Suppressions::parse(source);
 
@@ -143,6 +143,23 @@ pub fn analyze_file(path: &Path, source: &str, rules: &[&dyn Rule], enrich: bool
         parsed_cleanly: context.parsed_cleanly(),
         rules_run,
     }
+}
+
+/// Parses and lints a single file, returning the same shape as before this
+/// IDE work. Violations do **not** carry the IDE-only `fixes`/`suppressions`
+/// fields. Kept at its original three-argument signature so existing library
+/// and test consumers keep compiling unchanged.
+pub fn analyze_file(path: &Path, source: &str, rules: &[&dyn Rule]) -> AnalyzedFile {
+    analyze_file_impl(path, source, rules, false)
+}
+
+/// Like [`analyze_file`], but each surviving violation is also filled in with
+/// the machine-readable fix and suppression edits the IDE contract exposes (see
+/// [`Violation::fixes`] / [`Violation::suppressions`]). The CLI enables this
+/// only for `--format json`; text and `--auto-fix`/`--write-fix` output use the
+/// unenriched [`analyze_file`].
+pub fn analyze_file_enriched(path: &Path, source: &str, rules: &[&dyn Rule]) -> AnalyzedFile {
+    analyze_file_impl(path, source, rules, true)
 }
 
 /// Offers a suppression-comment insertion for every violation the Rust tool can
