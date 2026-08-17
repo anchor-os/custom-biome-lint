@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use super::violation::{Severity, Violation};
+use super::violation::{Severity, Suggestion, Violation};
 
 /// All violations found in one file, sorted by position.
 #[derive(Debug, Clone)]
@@ -112,7 +112,8 @@ pub fn format_reports(reports: &[FileReport], totals: &Totals) -> String {
 
 /// Machine-readable diagnostics for CI/tooling integration. The schema is a
 /// stable, intentionally minimal contract — additive changes only, so
-/// existing consumers keep working across tool versions.
+/// existing consumers keep working across tool versions. See
+/// `docs/IDE_PROTOCOL.md` for the full contract.
 ///
 /// ```json
 /// {
@@ -121,7 +122,20 @@ pub fn format_reports(reports: &[FileReport], totals: &Totals) -> String {
 ///     {
 ///       "path": "src/a.js",
 ///       "violations": [
-///         { "line": 1, "col": 1, "severity": "error", "rule": "no-native-map", "message": "..." }
+///         {
+///           "line": 1, "col": 1,
+///           "startLine": 1, "startColumn": 1,
+///           "endLine": 1, "endColumn": 3,
+///           "severity": "error", "rule": "no-native-map", "message": "...",
+///           "fixes": [
+///             { "kind": "safe", "title": "Apply safe fix for no-native-map",
+///               "edits": [ { "startLine": 1, "startColumn": 1, "endLine": 1, "endColumn": 3, "replacement": "..." } ] }
+///           ],
+///           "suppressions": [
+///             { "kind": "suppress", "title": "Suppress no-native-map",
+///               "edits": [ { "startLine": 1, "startColumn": 1, "endLine": 1, "endColumn": 1, "replacement": "// custom-biome-ignore-line no-native-map\n" } ] }
+///           ]
+///         }
 ///       ]
 ///     }
 ///   ],
@@ -140,13 +154,32 @@ pub fn format_reports_json(reports: &[FileReport], totals: &Totals) -> String {
                 .violations
                 .iter()
                 .map(|v| {
-                    json!({
-                        "line": v.line,
-                        "col": v.col,
-                        "severity": v.severity.label(),
-                        "rule": v.rule,
-                        "message": v.message,
-                    })
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("line".into(), json!(v.line));
+                    obj.insert("col".into(), json!(v.col));
+                    // `startLine`/`startColumn` mirror `line`/`col` so the
+                    // coordinate convention is explicit and stable, while
+                    // `endLine`/`endColumn` are added only when the rule
+                    // tracks a precise span (additive, never breaking).
+                    obj.insert("startLine".into(), json!(v.line));
+                    obj.insert("startColumn".into(), json!(v.col));
+                    if let Some((end_line, end_column)) = v.end {
+                        obj.insert("endLine".into(), json!(end_line));
+                        obj.insert("endColumn".into(), json!(end_column));
+                    }
+                    obj.insert("severity".into(), json!(v.severity.label()));
+                    obj.insert("rule".into(), json!(v.rule));
+                    obj.insert("message".into(), json!(v.message.clone()));
+                    if !v.fixes.is_empty() {
+                        obj.insert("fixes".into(), json!(suggestions_to_json(&v.fixes)));
+                    }
+                    if !v.suppressions.is_empty() {
+                        obj.insert(
+                            "suppressions".into(),
+                            json!(suggestions_to_json(&v.suppressions)),
+                        );
+                    }
+                    serde_json::Value::Object(obj)
                 })
                 .collect();
             json!({
@@ -235,10 +268,39 @@ fn plural(n: usize) -> &'static str {
     }
 }
 
+/// Serializes a list of [`Suggestion`]s (safe fixes or suppressions) into the
+/// JSON shape the IDE contract uses: each suggestion is `{ kind, title, edits }`
+/// where `edits` is a list of `{ startLine, startColumn, endLine, endColumn,
+/// replacement }`.
+fn suggestions_to_json(suggestions: &[Suggestion]) -> Vec<serde_json::Value> {
+    suggestions
+        .iter()
+        .map(|suggestion| {
+            let edits: Vec<_> = suggestion
+                .edits
+                .iter()
+                .map(|edit| {
+                    json!({
+                        "startLine": edit.start_line,
+                        "startColumn": edit.start_column,
+                        "endLine": edit.end_line,
+                        "endColumn": edit.end_column,
+                        "replacement": edit.replacement,
+                    })
+                })
+                .collect();
+            json!({
+                "kind": suggestion.kind,
+                "title": suggestion.title,
+                "edits": edits,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn json_output_is_valid_and_carries_every_field() {
         let reports = vec![FileReport::new(

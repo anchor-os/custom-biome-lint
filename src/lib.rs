@@ -12,6 +12,7 @@
 //!     "const selectAll = () => createSelector(a, b);",
 //!     Path::new("example.js"),
 //!     &registry.all(),
+//!     false,
 //! );
 //! ```
 
@@ -43,6 +44,10 @@ pub use suppress::{find_suppression_comments, SuppressionComment, Suppressions};
 use std::path::Path;
 
 /// Lints a single in-memory source string, honouring suppression comments.
-pub fn lint_source(source: &str, path: &Path, rules: &[&dyn Rule]) -> Vec<Violation> {
-    analyze_file(path, source, rules).violations
+///
+/// `enrich` mirrors [`analyze_file`]: when true, violations carry the extra
+/// IDE fix/suppression edits. Library callers that only need the violations
+/// themselves pass `false`.
+pub fn lint_source(source: &str, path: &Path, rules: &[&dyn Rule], enrich: bool) -> Vec<Violation> {
+    analyze_file(path, source, rules, enrich).violations
 }

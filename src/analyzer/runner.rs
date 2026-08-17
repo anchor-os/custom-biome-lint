@@ -5,7 +5,8 @@ use biome_js_parser::{parse, JsParserOptions};
 use biome_js_syntax::JsSyntaxNode;
 use biome_languages::JsFileSource;
 
-use crate::diagnostics::Violation;
+use crate::diagnostics::{Edit, Suggestion, Violation};
+use crate::fixer::plan_file;
 use crate::rules::Rule;
 use crate::semantic::SemanticModel;
 use crate::suppress::Suppressions;
@@ -80,7 +81,13 @@ pub struct AnalyzedFile {
 
 /// Parses `source` once, runs every rule that supports the file's extension,
 /// drops suppressed violations, and returns the rest in source order.
-pub fn analyze_file(path: &Path, source: &str, rules: &[&dyn Rule]) -> AnalyzedFile {
+///
+/// When `enrich` is true, each surviving violation is also filled in with the
+/// machine-readable fix and suppression edits the IDE contract exposes (see
+/// [`Violation::fixes`] / [`Violation::suppressions`]). The CLI enables this
+/// only for `--format json`; text and `--auto-fix`/`--write-fix` output do not
+/// need the extra work.
+pub fn analyze_file(path: &Path, source: &str, rules: &[&dyn Rule], enrich: bool) -> AnalyzedFile {
     let context = FileContext::parse(source, path);
     let suppressions = Suppressions::parse(source);
 
@@ -102,10 +109,70 @@ pub fn analyze_file(path: &Path, source: &str, rules: &[&dyn Rule]) -> AnalyzedF
 
     violations.sort_by_key(|v| (v.line, v.col, v.rule));
 
+    // Safe-fix edits reuse each rule's own `Fix` byte range — the exact same
+    // data `--auto-fix` applies to disk — so the IDE contract and the CLI
+    // autofix can never silently disagree about what a fix does.
+    for violation in &mut violations {
+        if let Some(fix) = &violation.fix {
+            let (s_line, s_col) = context.line_col(fix.start);
+            let (e_line, e_col) = context.line_col(fix.end);
+            violation.fixes.push(Suggestion {
+                kind: "safe",
+                title: format!("Apply safe fix for {}", violation.rule),
+                edits: vec![Edit {
+                    start_line: s_line,
+                    start_column: s_col,
+                    end_line: e_line,
+                    end_column: e_col,
+                    replacement: fix.replacement.clone(),
+                }],
+            });
+        }
+    }
+
+    if enrich {
+        attach_suppression_suggestions(&mut violations, &context, path, source);
+    }
+
     AnalyzedFile {
         violations,
         parsed_cleanly: context.parsed_cleanly(),
         rules_run,
+    }
+}
+
+/// Offers a suppression-comment insertion for every violation the Rust tool can
+/// actually place one for, reusing the exact placement logic `--write-fix`
+/// uses. The IDE must never compute suppression placement itself — this keeps
+/// every placement rule (JS/JSX, comments, existing markers, line length)
+/// owned by Rust.
+fn attach_suppression_suggestions(
+    violations: &mut [Violation],
+    context: &FileContext<'_>,
+    path: &Path,
+    source: &str,
+) {
+    let plan = plan_file(path, source, violations);
+    for change in &plan.changes {
+        let (line, col) = context.line_col(change.insert_offset);
+        let edit = Edit {
+            start_line: line,
+            start_column: col,
+            end_line: line,
+            end_column: col,
+            replacement: change.insert_text.clone(),
+        };
+        for violation in violations.iter_mut() {
+            if violation.line == change.line_number
+                && change.rules.iter().any(|rule| rule == violation.rule)
+            {
+                violation.suppressions.push(Suggestion {
+                    kind: "suppress",
+                    title: format!("Suppress {}", violation.rule),
+                    edits: vec![edit.clone()],
+                });
+            }
+        }
     }
 }
 

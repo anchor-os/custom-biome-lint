@@ -16,6 +16,14 @@ pub struct CliArgs {
     pub trace: bool,
     pub help: bool,
     pub version: bool,
+    /// Print machine-readable rule metadata (name, description, default
+    /// severity, supported extensions) as JSON and exit. Used by IDE adapters
+    /// to populate rule catalogs without hard-coding them.
+    pub rules: bool,
+    /// Read the file to lint from stdin instead of from disk. Requires a file
+    /// path argument (used for extension detection and as the reported path),
+    /// e.g. `custom-biome-lint --stdin src/a.js --format json`.
+    pub stdin: bool,
     /// Add suppression comments for every violation instead of reporting them.
     pub write_fix: bool,
     /// Rewrite violations in place using each rule's own fix, instead of
@@ -48,6 +56,8 @@ impl CliArgs {
             match arg.as_str() {
                 "-h" | "--help" => parsed.help = true,
                 "-V" | "--version" => parsed.version = true,
+                "--rules" => parsed.rules = true,
+                "--stdin" => parsed.stdin = true,
                 "--verbose" => parsed.verbosity = parsed.verbosity.max(1),
                 "--debug" => parsed.debug = true,
                 "--trace" => parsed.trace = true,
@@ -108,6 +118,21 @@ impl CliArgs {
         if parsed.write_fix && parsed.auto_fix {
             return Err(
                 "--write-fix and --auto-fix are two different fix mechanisms; run one, look at the result, then the other"
+                    .to_string(),
+            );
+        }
+        if parsed.rules && (parsed.write_fix || parsed.auto_fix) {
+            return Err("--rules cannot be combined with --write-fix or --auto-fix".to_string());
+        }
+        if parsed.stdin && (parsed.write_fix || parsed.auto_fix) {
+            return Err("--stdin cannot be combined with --write-fix or --auto-fix".to_string());
+        }
+        if parsed.stdin && parsed.rules {
+            return Err("--stdin cannot be combined with --rules".to_string());
+        }
+        if parsed.stdin && parsed.pattern.is_none() {
+            return Err(
+                "--stdin requires a file path argument (used for extension detection and reporting), e.g. custom-biome-lint --stdin src/a.js --format json"
                     .to_string(),
             );
         }

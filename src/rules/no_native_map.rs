@@ -38,11 +38,15 @@ impl Rule for NoNativeMap {
         let mut violations = Vec::new();
 
         for node in file.tree().descendants() {
-            let Some(offset) = suspect_map_occurrence(&node, semantic, &aliases) else {
+            let Some((start, end)) = suspect_map_occurrence(&node, semantic, &aliases) else {
                 continue;
             };
-            let (line, col) = file.line_col(offset);
-            violations.push(Violation::error(self.name(), line, col, MESSAGE));
+            let (line, col) = file.line_col(start);
+            let (end_line, end_col) = file.line_col(end);
+            violations.push(
+                Violation::error(self.name(), line, col, MESSAGE)
+                    .with_end((end_line, end_col)),
+            );
         }
 
         violations
@@ -284,17 +288,19 @@ fn object_pattern_map_offset(pattern: &JsObjectBindingPattern) -> Option<usize> 
 }
 
 /// A "Map" occurrence that is not resolvable to `immutable`'s `Map`, if
-/// `node` is one. Only reference and member-name positions are checked --
-/// binding declarations (`function f(Map)`, `const Map = ...`) are never
-/// flagged on their own, since declaring a local named `Map` isn't itself a
-/// use of the value; what matters is whether later *uses* of that binding
-/// turn out to mean Immutable's `Map` or not, which lexical resolution
-/// already answers correctly, including under shadowing.
+/// `node` is one. Returns the byte `(start, end)` of the `Map` token so the
+/// caller can report a precise diagnostic range. Only reference and
+/// member-name positions are checked -- binding declarations
+/// (`function f(Map)`, `const Map = ...`) are never flagged on their own,
+/// since declaring a local named `Map` isn't itself a use of the value; what
+/// matters is whether later *uses* of that binding turn out to mean
+/// Immutable's `Map` or not, which lexical resolution already answers
+/// correctly, including under shadowing.
 fn suspect_map_occurrence(
     node: &JsSyntaxNode,
     semantic: &SemanticModel,
     aliases: &ImmutableAliases,
-) -> Option<usize> {
+) -> Option<(usize, usize)> {
     match node.kind() {
         JsSyntaxKind::JS_REFERENCE_IDENTIFIER => {
             let reference = JsReferenceIdentifier::cast_ref(node)?;
@@ -304,7 +310,8 @@ fn suspect_map_occurrence(
             if aliases.resolves_to_map(semantic, &reference) {
                 return None;
             }
-            Some(usize::from(reference.syntax().text_trimmed_range().start()))
+            let range = reference.syntax().text_trimmed_range();
+            Some((usize::from(range.start()), usize::from(range.end())))
         }
         JsSyntaxKind::JS_NAME => {
             let name = JsName::cast_ref(node)?;
@@ -322,7 +329,8 @@ fn suspect_map_occurrence(
                     return None;
                 }
             }
-            Some(usize::from(node.text_trimmed_range().start()))
+            let range = node.text_trimmed_range();
+            Some((usize::from(range.start()), usize::from(range.end())))
         }
         _ => None,
     }

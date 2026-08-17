@@ -52,6 +52,13 @@ pub struct FileChange {
     pub line_number: usize,
     pub placement: Placement,
     pub rules: Vec<String>,
+    /// Byte offset, in the *original* source, at which the insertion happens.
+    /// `insert_text` is spliced in there (a zero-width insertion). Exposed so
+    /// the IDE contract can turn a planned suppression into a coordinate-based
+    /// [`crate::diagnostics::Edit`] without re-deriving placement.
+    pub insert_offset: usize,
+    /// Exact text inserted at `insert_offset`.
+    pub insert_text: String,
 }
 
 /// A violation that could not be suppressed without risking a change in meaning.
@@ -225,10 +232,12 @@ pub fn plan_file(path: &Path, source: &str, violations: &[Violation]) -> FilePla
             merges.insert(comment.comment_line, (comment.append_at, fragment.clone()));
             changes.push(FileChange {
                 path: path.to_path_buf(),
-                comment_added: fragment,
+                comment_added: fragment.clone(),
                 line_number: line,
                 placement: Placement::Merged,
                 rules: missing.iter().map(|r| r.to_string()).collect(),
+                insert_offset: starts[comment.comment_line - 1] + comment.append_at,
+                insert_text: fragment,
             });
             continue;
         }
@@ -278,10 +287,12 @@ pub fn plan_file(path: &Path, source: &str, violations: &[Violation]) -> FilePla
                 appends.insert(line, format!(" {comment}"));
                 changes.push(FileChange {
                     path: path.to_path_buf(),
-                    comment_added: comment,
+                    comment_added: comment.clone(),
                     line_number: line,
                     placement: Placement::Trailing,
-                    rules: owned,
+                    rules: owned.clone(),
+                    insert_offset: line_start + content.len(),
+                    insert_text: format!(" {comment}"),
                 });
                 continue;
             }
@@ -318,10 +329,12 @@ pub fn plan_file(path: &Path, source: &str, violations: &[Violation]) -> FilePla
             prefix_inserts.insert(line, format!("{indent}{comment}"));
             changes.push(FileChange {
                 path: path.to_path_buf(),
-                comment_added: comment,
+                comment_added: comment.clone(),
                 line_number: line,
                 placement: Placement::OwnLine,
-                rules: owned,
+                rules: owned.clone(),
+                insert_offset: line_start,
+                insert_text: format!("{indent}{comment}\n"),
             });
             continue;
         }

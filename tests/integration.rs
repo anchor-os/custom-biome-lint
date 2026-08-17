@@ -28,7 +28,7 @@ fn check_source(rule_name: &str, source: &str, path: &Path) -> Vec<Violation> {
         1,
         "rule {rule_name} is not registered exactly once"
     );
-    lint_source(source, path, &rules)
+    lint_source(source, path, &rules, false)
 }
 
 fn check_one(rule_name: &str, rule_dir: &str, fixture_name: &str) -> Vec<Violation> {
@@ -808,8 +808,8 @@ mod extensions {
         let registry = RuleRegistry::with_all_rules();
         let rules = registry.all();
         let source = "const cache = new Map();\n";
-        assert!(lint_source(source, Path::new("a.ts"), &rules).is_empty());
-        assert!(!lint_source(source, Path::new("a.js"), &rules).is_empty());
+        assert!(lint_source(source, Path::new("a.ts"), &rules, false).is_empty());
+        assert!(!lint_source(source, Path::new("a.js"), &rules, false).is_empty());
     }
 }
 
