@@ -110,11 +110,22 @@ Field rules:
 
 ## 4. Severity mapping
 
-| `defaultSeverity` / `severity` | suggested IDE level |
-| ------------------------------ | ------------------- |
-| `error`                        | Error               |
-| `warn`                         | Warning             |
-| `off`                          | (rule not active)   |
+Two distinct fields carry severity, and they use different vocabularies:
+
+- `severity` — the per-diagnostic field in the `version:1` output. Values:
+  `error`, `warning`.
+- `defaultSeverity` — the per-rule field from `--rules`. Values: `error`,
+  `warn`, `off`.
+
+Map them to IDE levels as follows:
+
+| field            | value     | suggested IDE level    |
+| ---------------- | --------- | ---------------------- |
+| `severity`       | `error`   | Error                  |
+| `severity`       | `warning` | Warning                |
+| `defaultSeverity`| `error`   | Error (rule active)    |
+| `defaultSeverity`| `warn`    | Warning (rule active)  |
+| `defaultSeverity`| `off`     | (rule not active)      |
 
 ## 5. stdin support
 
@@ -122,9 +133,11 @@ Field rules:
 cat file.js | custom-biome-lint --stdin <path> --format json
 ```
 
-- `--stdin` reads source from stdin; `<path>` is required and used only for
-  extension/display (it must exist and match an enabled rule's
-  `supportedExtensions`). The on-disk file is **not** read when `--stdin` is set.
+- `--stdin` reads source from stdin; `<path>` is required and used for
+  extension filtering and display. The path need **not** exist on disk — the
+  on-disk file is **not** read. A rule only runs when the path's extension is in
+  that rule's `supportedExtensions` (same `rule_supports` gate as single-file
+  mode), so an extension that no enabled rule supports yields no diagnostics.
 - Mutually exclusive with `--write-fix`, `--auto-fix`, and `--rules`.
 
 ## 6. Compatibility guarantees

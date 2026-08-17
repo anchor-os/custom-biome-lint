@@ -109,28 +109,32 @@ pub fn analyze_file(path: &Path, source: &str, rules: &[&dyn Rule], enrich: bool
 
     violations.sort_by_key(|v| (v.line, v.col, v.rule));
 
-    // Safe-fix edits reuse each rule's own `Fix` byte range — the exact same
-    // data `--auto-fix` applies to disk — so the IDE contract and the CLI
-    // autofix can never silently disagree about what a fix does.
-    for violation in &mut violations {
-        if let Some(fix) = &violation.fix {
-            let (s_line, s_col) = context.line_col(fix.start);
-            let (e_line, e_col) = context.line_col(fix.end);
-            violation.fixes.push(Suggestion {
-                kind: "safe",
-                title: format!("Apply safe fix for {}", violation.rule),
-                edits: vec![Edit {
-                    start_line: s_line,
-                    start_column: s_col,
-                    end_line: e_line,
-                    end_column: e_col,
-                    replacement: fix.replacement.clone(),
-                }],
-            });
-        }
-    }
-
+    // Enrichment is additive: only when requested do we surface the IDE-only
+    // fields (`fixes`/`suppressions`). The base `version:1` contract stays
+    // unchanged, and unenriched callers (existing JSON consumers) get no
+    // suggestions.
     if enrich {
+        // Safe-fix edits reuse each rule's own `Fix` byte range — the exact
+        // same data `--auto-fix` applies to disk — so the IDE contract and the
+        // CLI autofix can never silently disagree about what a fix does.
+        for violation in &mut violations {
+            if let Some(fix) = &violation.fix {
+                let (s_line, s_col) = context.line_col(fix.start);
+                let (e_line, e_col) = context.line_col(fix.end);
+                violation.fixes.push(Suggestion {
+                    kind: "safe",
+                    title: format!("Apply safe fix for {}", violation.rule),
+                    edits: vec![Edit {
+                        start_line: s_line,
+                        start_column: s_col,
+                        end_line: e_line,
+                        end_column: e_col,
+                        replacement: fix.replacement.clone(),
+                    }],
+                });
+            }
+        }
+
         attach_suppression_suggestions(&mut violations, &context, path, source);
     }
 

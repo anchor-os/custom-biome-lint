@@ -2,7 +2,7 @@ use std::io::Write;
 use std::path::Path;
 
 use custom_biome_lint::{
-    lint_source, RuleRegistry, RuleSeverity, Severity, Violation,
+    lint_source, fixer::{plan_file, Placement}, RuleRegistry, RuleSeverity, Severity, Violation,
 };
 
 fn check_source(rule_name: &str, source: &str) -> Vec<Violation> {
@@ -193,4 +193,24 @@ fn diagnostics_build_without_enrichment() {
     assert_eq!(violations.len(), 1);
     assert!(violations[0].fixes.is_empty());
     assert!(violations[0].suppressions.is_empty());
+}
+
+/// §3.3 — the suppression edit preserves the source line ending (CRLF), so an
+/// IDE applying the edit matches what `--write-fix` writes to disk. A wide line
+/// forces the own-line placement (trailing is refused by width).
+#[test]
+fn suppression_edit_preserves_crlf() {
+    let source = format!("const x = {}; const m = new Map();\r\n", "a".repeat(100));
+    let violation = Violation::error("no-native-map", 1, 1, "Use Immutable.js Map instead of native Map.");
+    let plan = plan_file(Path::new("demo.js"), &source, &[violation]);
+    let own_line = plan
+        .changes
+        .iter()
+        .find(|c| matches!(c.placement, Placement::OwnLine))
+        .expect("own-line suppression is planned for a too-wide line");
+    assert!(
+        own_line.insert_text.ends_with("\r\n"),
+        "own-line suppression must preserve the source CRLF ending, got {:?}",
+        own_line.insert_text
+    );
 }

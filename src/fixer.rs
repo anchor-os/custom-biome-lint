@@ -326,6 +326,13 @@ pub fn plan_file(path: &Path, source: &str, violations: &[Violation]) -> FilePla
             let in_jsx = jsx.contains(line_start);
             let indent: String = content.chars().take_while(|c| c.is_whitespace()).collect();
             let comment = comment_text(IGNORE_NEXT_LINE, &rules, in_jsx);
+            // Preserve the source line ending (CRLF/LF) so the IDE edit matches
+            // what `emit` writes to disk. The final physical line has no
+            // trailing ending, so fall back to LF.
+            let inserted_ending = match lines.get(line - 1) {
+                Some((_, ending)) if !ending.is_empty() => *ending,
+                _ => "\n",
+            };
             prefix_inserts.insert(line, format!("{indent}{comment}"));
             changes.push(FileChange {
                 path: path.to_path_buf(),
@@ -334,7 +341,7 @@ pub fn plan_file(path: &Path, source: &str, violations: &[Violation]) -> FilePla
                 placement: Placement::OwnLine,
                 rules: owned.clone(),
                 insert_offset: line_start,
-                insert_text: format!("{indent}{comment}\n"),
+                insert_text: format!("{indent}{comment}{inserted_ending}"),
             });
             continue;
         }

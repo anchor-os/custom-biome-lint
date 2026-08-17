@@ -61,13 +61,19 @@ AUTOFIX:
      The array form is shorthand for \"off\". The object form also accepts
      \"warn\" (reported but does not fail the run) and \"error\" (default).
 
-     Two rules ship OFF and only run once given a severity here:
+      Six rules ship OFF and only run once given a severity here:
 
          bare-arrow-param-prop-assign   property mutation through an arrow's
                                         unparenthesized single parameter
-         deep-param-prop-assign         plain-parameter mutation 2+ levels deep
+          deep-param-prop-assign         plain-parameter mutation 2+ levels deep
+          no-for-statement               bans `for` loops
+          no-while-statement             bans `while` loops
+          no-do-while-statement          bans `do...while` loops
+          param-mutating-array-method-call
+                                         bans mutating array-method calls on
+                                         parameters
 
-     For those two, no entry means \"off\"; every other rule defaults to
+      For those six, no entry means \"off\"; every other rule defaults to
      \"error\". Run with -v to see which rules are enabled and why.
 
  MACHINE-READABLE OUTPUT (IDE INTEGRATION):
