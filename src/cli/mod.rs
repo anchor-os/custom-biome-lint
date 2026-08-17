@@ -516,6 +516,8 @@ fn run_stdin(
             .expect("stdin requires a path (validated)"),
     );
 
+    let start = std::time::Instant::now();
+
     let mut source = String::new();
     if let Err(error) = std::io::stdin().read_to_string(&mut source) {
         reporter.error(&format!("failed to read stdin: {error}"));
@@ -539,7 +541,7 @@ fn run_stdin(
     }
 
     let mut totals = tally(&reports, 1, 0);
-    totals.elapsed = std::time::Instant::now().elapsed();
+    totals.elapsed = start.elapsed();
     reporter.print_report(&reports, &totals, args.format);
 
     if totals.errors > 0 {

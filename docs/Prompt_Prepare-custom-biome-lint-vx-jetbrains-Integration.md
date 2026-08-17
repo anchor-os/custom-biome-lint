@@ -365,7 +365,7 @@ Add comprehensive tests for the new contract.
 
 At minimum test:
 
-### Diagnostics
+## Diagnostics
 
 - error
 - warn

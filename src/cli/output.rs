@@ -77,8 +77,9 @@ AUTOFIX:
      \"error\". Run with -v to see which rules are enabled and why.
 
  MACHINE-READABLE OUTPUT (IDE INTEGRATION):
-     `--format json` emits a stable contract (version 1) on stdout. Each
-     violation carries file, start line/column, severity, rule, and message,
+     `--format json` emits a stable contract (version 1) on stdout. The
+     enclosing `files[]` entry carries the `path`; each violation carries start
+     line/column, severity, rule, and message,
      plus optional `startLine`/`startColumn` (always) and `endLine`/`endColumn`
      (when the rule tracks a precise span), and the IDE-only fields `fixes`
      and `suppressions` when applicable:
