@@ -26,15 +26,22 @@ FLAGS:
         --dry-run      With --write-fix or --auto-fix, report the changes
                        without writing them
         --format <text|json>
-                       Diagnostics output format (default: text). Not
-                       supported together with --write-fix or --auto-fix.
-    -v, --verbose      Standard verbosity (shows rules, skips)
-    -vv                Deep verbosity (file discovery, rule execution)
-    -vvv               Super verbose (per-file AST details)
-    -d, --debug        Debug: internal state, every step
-        --trace        Prefix log lines with their source location
-    -h, --help         Show this help
-    -V, --version      Show version
+                        Diagnostics output format (default: text). Not
+                        supported together with --write-fix or --auto-fix.
+         --rules        Print machine-readable rule metadata (name,
+                        description, default severity, supported
+                        extensions) as JSON and exit. For IDE adapters.
+         --stdin        Read the file to lint from stdin. Requires a file
+                        path argument for extension detection and reporting,
+                        e.g. custom-biome-lint --stdin src/a.js --format json
+     -v, --verbose      Standard verbosity (shows rules, skips)
+     -vv                Deep verbosity (file discovery, rule execution)
+     -vvv               Super verbose (per-file AST details)
+     -d, --debug        Debug: internal state, every step
+         --trace        Prefix log lines with their source location
+     -h, --help         Show this help
+     -V, --version      Show version
+
 
 AUTOFIX:
     --auto-fix currently applies to:
@@ -44,24 +51,56 @@ AUTOFIX:
     Every other rule has no unambiguous fix and is left for --write-fix or
     manual editing instead.
 
-CONFIGURATION:
-    package.json may set rule severities by name:
+ CONFIGURATION:
+     package.json may set rule severities by name:
 
-        { \"ignoreBiomeExtensionRules\": [\"no-native-map\"] }
-        { \"ignoreBiomeExtensionRules\": { \"no-native-map\": \"off\",
-                                          \"reselect-arity-match\": \"warn\" } }
+         { \"ignoreBiomeExtensionRules\": [\"no-native-map\"] }
+         { \"ignoreBiomeExtensionRules\": { \"no-native-map\": \"off\",
+                                           \"reselect-arity-match\": \"warn\" } }
 
-    The array form is shorthand for \"off\". The object form also accepts
-    \"warn\" (reported but does not fail the run) and \"error\" (default).
+     The array form is shorthand for \"off\". The object form also accepts
+     \"warn\" (reported but does not fail the run) and \"error\" (default).
 
-    Two rules ship OFF and only run once given a severity here:
+      Six rules ship OFF and only run once given a severity here:
 
-        bare-arrow-param-prop-assign   property mutation through an arrow's
-                                       unparenthesized single parameter
-        deep-param-prop-assign         plain-parameter mutation 2+ levels deep
+         bare-arrow-param-prop-assign   property mutation through an arrow's
+                                        unparenthesized single parameter
+          deep-param-prop-assign         plain-parameter mutation 2+ levels deep
+          no-for-statement               bans `for` loops
+          no-while-statement             bans `while` loops
+          no-do-while-statement          bans `do...while` loops
+          param-mutating-array-method-call
+                                         bans mutating array-method calls on
+                                         parameters
 
-    For those two, no entry means \"off\"; every other rule defaults to
-    \"error\". Run with -v to see which rules are enabled and why.
+      For those six, no entry means \"off\"; every other rule defaults to
+     \"error\". Run with -v to see which rules are enabled and why.
+
+ MACHINE-READABLE OUTPUT (IDE INTEGRATION):
+     `--format json` emits a stable contract (version 1) on stdout. The
+     enclosing `files[]` entry carries the `path`; each violation carries start
+     line/column, severity, rule, and message,
+     plus optional `startLine`/`startColumn` (always) and `endLine`/`endColumn`
+     (when the rule tracks a precise span), and the IDE-only fields `fixes`
+     and `suppressions` when applicable:
+
+         \"fixes\": [ { \"kind\": \"safe\", \"title\": \"...\",
+                       \"edits\": [ { \"startLine\": 12, \"startColumn\": 30,
+                                    \"endLine\": 12, \"endColumn\": 37,
+                                    \"replacement\": \"...\" } ] } ]
+
+         \"suppressions\": [ { \"kind\": \"suppress\", \"title\": \"Suppress no-native-map\",
+                              \"edits\": [ { \"startLine\": 11, \"startColumn\": 1,
+                                           \"endLine\": 11, \"endColumn\": 1,
+                                           \"replacement\": \"// custom-biome-ignore-line no-native-map\\n\" } ] } ]
+
+     `fixes` reuses each rule's own autofix byte range; `suppressions` reuses
+     the exact placement logic --write-fix uses. The IDE must never compute a
+     fix or suppression placement itself. See docs/IDE_PROTOCOL.md.
+
+     `--rules` prints the rule catalog (name, description, defaultSeverity,
+     supportedExtensions) as JSON for adapters to populate their UI.
+
 
 SUPPRESSIONS:
     // custom-biome-ignore-line rule-name[, rule-name2]

@@ -5,14 +5,17 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::fs;
 use std::hash::{Hash, Hasher};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
+use serde_json::json;
+
 pub use args::{CliArgs, OutputFormat};
 pub use output::{Reporter, HELP};
 
-use crate::analyzer::{analyze_file, discover_files, resolve_pattern, GlobSet};
+use crate::analyzer::{analyze_file_enriched, discover_files, resolve_pattern, GlobSet};
 use crate::autofix::Autofix;
 use crate::cache::{hash_content, CacheManager};
 use crate::config::{PackageConfig, RuleSeverity, CONFIG_KEY};
@@ -48,6 +51,13 @@ where
     }
     if args.version {
         println!("custom-biome-lint {VERSION}");
+        return ExitCode::SUCCESS;
+    }
+
+    // Rule metadata is a standalone, side-effect-free query — it does not need
+    // a package.json, a pattern, or any file on disk.
+    if args.rules {
+        print_rule_metadata(&RuleRegistry::with_all_rules());
         return ExitCode::SUCCESS;
     }
 
@@ -94,6 +104,14 @@ where
             };
             vlog!(reporter, 1, "skipping {} ({reason})", ignored.name());
         }
+    }
+
+    // `custom-biome-lint --stdin <path> --format json` lints one in-memory
+    // document (the IDE streams the open editor buffer). It skips discovery,
+    // caching, and fix modes (those are rejected at parse time) and reuses the
+    // exact same analysis and enrichment path as a normal run.
+    if args.stdin {
+        return run_stdin(&args, cwd, &reporter, &config, &registry);
     }
 
     if rules.is_empty() {
@@ -427,7 +445,7 @@ fn analyze_files_sequential(
         }
         checked += 1;
 
-        let result = analyze_file(file, &source, rules);
+        let result = analyze_file_enriched(file, &source, rules);
         if !result.parsed_cleanly {
             unparsed += 1;
         }
@@ -460,7 +478,7 @@ fn analyze_files_parallel(
                 cache_skipped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 return None;
             }
-            let result = analyze_file(file, &source, rules);
+            let result = analyze_file_enriched(file, &source, rules);
             Some((file.clone(), source, result))
         })
         .collect();
@@ -478,4 +496,92 @@ fn analyze_files_parallel(
         checked,
         cache_skipped.load(std::sync::atomic::Ordering::Relaxed),
     )
+}
+
+/// Lints a single document supplied on stdin. The positional `pattern` is the
+/// file path (used for extension-based rule selection and as the reported
+/// path). Reuses `analyze_file` — including the IDE enrichment that attaches
+/// fix/suppression edits when `--format json` is set — so stdin output is
+/// byte-for-byte the same contract as a file run.
+fn run_stdin(
+    args: &CliArgs,
+    cwd: &Path,
+    reporter: &Reporter,
+    config: &PackageConfig,
+    registry: &RuleRegistry,
+) -> ExitCode {
+    let path = PathBuf::from(
+        args.pattern
+            .clone()
+            .expect("stdin requires a path (validated)"),
+    );
+
+    let start = std::time::Instant::now();
+
+    let mut source = String::new();
+    if let Err(error) = std::io::stdin().read_to_string(&mut source) {
+        reporter.error(&format!("failed to read stdin: {error}"));
+        return ExitCode::from(EXIT_USAGE);
+    }
+
+    let rules = registry.enabled(config);
+    let mut analyzed = analyze_file_enriched(&path, &source, &rules);
+
+    if !analyzed.parsed_cleanly {
+        reporter.warn(&format!("parse errors in {}", path.display()));
+    }
+    apply_severity_overrides(&mut analyzed.violations, config);
+
+    let mut reports = Vec::new();
+    if !analyzed.violations.is_empty() {
+        reports.push(FileReport::new(
+            display_path(&path, cwd),
+            analyzed.violations,
+        ));
+    }
+
+    let mut totals = tally(&reports, 1, 0);
+    totals.elapsed = start.elapsed();
+    reporter.print_report(&reports, &totals, args.format);
+
+    if totals.errors > 0 {
+        ExitCode::from(EXIT_VIOLATIONS)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// Prints stable, machine-readable metadata for every rule. The data comes from
+/// the rule registry (name/description/default severity/extensions) — never a
+/// duplicated hard-coded table — so it cannot drift from the real rules.
+fn print_rule_metadata(registry: &RuleRegistry) {
+    // Sort by rule name so the output is deterministic regardless of the order
+    // rules happen to be registered in. The registry stays the source of truth;
+    // we only reorder for stable, tool-friendly output.
+    let mut ordered: Vec<&dyn crate::rules::Rule> = registry.all();
+    ordered.sort_by_key(|rule| rule.name());
+
+    let rules: Vec<serde_json::Value> = ordered
+        .iter()
+        .map(|rule| {
+            json!({
+                "name": rule.name(),
+                "description": rule.description(),
+                "defaultSeverity": rule.default_severity().label(),
+                "enabledByDefault": rule.default_severity() != RuleSeverity::Off,
+                "supportedExtensions": rule
+                    .supported_extensions()
+                    .iter()
+                    .map(|ext| ext.trim_start_matches('.'))
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+
+    let doc = json!({ "version": 1, "rules": rules });
+    // A plain `json!` tree of owned values never fails to serialize.
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&doc).expect("rule metadata is always serializable")
+    );
 }

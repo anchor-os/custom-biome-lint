@@ -50,6 +50,7 @@ impl Rule for NoArrowFunctionCreateSelector {
             let range = arrow.syntax().text_trimmed_range();
             let offset = usize::from(range.start());
             let (line, col) = file.line_col(offset);
+            let (end_line, end_col) = file.line_col(usize::from(range.end()));
             let mut violation = Violation::error(
                 self.name(),
                 line,
@@ -60,7 +61,8 @@ impl Rule for NoArrowFunctionCreateSelector {
                      Use createSelector directly, or rename to \"{}\".",
                     factory_name(&name)
                 ),
-            );
+            )
+            .with_end((end_line, end_col));
             // Unwrapping the arrow is otherwise always the same mechanical
             // edit: replace the whole `(...) => createSelector(...)` with
             // just the call, keeping the call's own original formatting

@@ -23,6 +23,17 @@ impl RuleSeverity {
             _ => None,
         }
     }
+
+    /// Lowercase string used in machine-readable output (rule metadata and
+    /// severity overrides). `Off` is reported as `"off"` even though an off
+    /// rule never produces violations.
+    pub fn label(self) -> &'static str {
+        match self {
+            RuleSeverity::Off => "off",
+            RuleSeverity::Warn => "warn",
+            RuleSeverity::Error => "error",
+        }
+    }
 }
 
 /// Rule severities configured via `package.json`.
