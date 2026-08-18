@@ -52,16 +52,43 @@ impl GlobSet {
             });
         }
         match common {
-            Some(segments) if !segments.is_empty() => {
-                // Rebuild the literal prefix as a single path so Windows drive
-                // prefixes (`C:`) and Unix roots (`/`) survive intact. Building
-                // it manually with a leading `"/"` plus `extend` would discard a
-                // `C:` drive prefix, turning an absolute `C:/Users/...` root into
-                // the drive-relative (and non-existent) `C:Users/...`, which then
-                // fails `root.exists()` and makes the run emit no stdout at all.
-                PathBuf::from(segments.join("/"))
+            // No literal prefix. This is either an all-wildcard prefix
+            // (`*`, `**`, `*.js`) or a bare Unix root `/` — `normalize` strips
+            // the trailing slash, so `/` collapses to an empty `raw`. The former
+            // starts the walk at cwd; the latter is the filesystem root.
+            Some(segments) if segments.is_empty() => {
+                if self.raw.is_empty() {
+                    PathBuf::from("/")
+                } else {
+                    PathBuf::from(".")
+                }
             }
-            _ => PathBuf::from("."),
+            Some(segments) => {
+                let joined = segments.join("/");
+                if joined.is_empty() {
+                    // Bare Unix root `/`: `normalize` strips the trailing slash,
+                    // collapsing the literal prefix to `[""]` and the joined
+                    // path to `""`. Map it back to the filesystem root so
+                    // discovery starts at `/` rather than the cwd.
+                    PathBuf::from("/")
+                } else if joined.len() == 2 && is_drive_path(&joined) {
+                    // Bare Windows drive root `C:/`: `normalize` strips the
+                    // trailing slash, leaving `C:`. Re-add it so the path
+                    // resolves to the drive root (`C:/`) instead of a
+                    // drive-relative location.
+                    PathBuf::from(format!("{joined}/"))
+                } else {
+                    // Rebuild the literal prefix as a single path so Windows
+                    // drive prefixes (`C:`) and Unix roots (`/`) survive intact.
+                    // Building it manually with a leading `"/"` plus `extend`
+                    // would discard a `C:` drive prefix, turning an absolute
+                    // `C:/Users/...` root into the drive-relative (and
+                    // non-existent) `C:Users/...`, which then fails
+                    // `root.exists()` and makes the run emit no stdout at all.
+                    PathBuf::from(joined)
+                }
+            }
+            None => PathBuf::from("."),
         }
     }
 
@@ -69,8 +96,10 @@ impl GlobSet {
         // `normalize` rewrites backslashes to forward slashes, so a Windows
         // drive path arrives as `C:/Users/...` — still absolute, even though it
         // has no leading slash. `Path::is_absolute` would only catch the Unix
-        // `/`-root form, so check the drive prefix explicitly too.
-        self.raw.starts_with('/') || is_drive_path(&self.raw)
+        // `/`-root form, so check the drive prefix explicitly too. A bare Unix
+        // root `/` normalizes to `""` and a bare drive root `C:/` to `C:`, both
+        // of which must still count as absolute.
+        self.raw.starts_with('/') || self.raw.is_empty() || is_drive_path(&self.raw)
     }
 
     /// File extensions the pattern can match, without the leading dot.
@@ -323,6 +352,27 @@ mod tests {
 
         assert!(set.is_match("/tmp/proj/src/a/b.js"));
         assert!(!set.is_match("src/a/b.js"));
+    }
+
+    #[test]
+    fn bare_unix_root_resolves_to_filesystem_root() {
+        // `normalize` strips the trailing slash, so `/` collapses to `""` and
+        // `/**`/`/*` keep only a root segment. The walk root must still be the
+        // filesystem root `/`, not cwd, and the pattern must count as absolute.
+        for pattern in ["/", "/**/*.js", "/*"] {
+            let set = GlobSet::new(pattern);
+            assert!(set.is_absolute(), "{pattern} should be absolute");
+            assert_eq!(set.root_dir(), PathBuf::from("/"), "{pattern} root_dir");
+        }
+    }
+
+    #[test]
+    fn bare_windows_drive_root_resolves_to_drive_root() {
+        // `C:/**/*.js` keeps only the `C:` literal prefix after the `**`; the
+        // root must be the drive root `C:/`, not a drive-relative path.
+        let set = GlobSet::new("C:/**/*.js");
+        assert!(set.is_absolute());
+        assert_eq!(set.root_dir(), PathBuf::from("C:/"));
     }
 
     #[test]
