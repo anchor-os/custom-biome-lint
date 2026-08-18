@@ -26,10 +26,10 @@ path = "src/bin/custom-biome-lint.rs"
 # concrete version rather than treating the git source as a wildcard. Biome's
 # per-crate versions are pinned at 0.5.7 / 0.1.0 across the 2.x line, so these
 # stay valid when the `rev` is bumped within 2.x.
-biome_js_parser = { git = "https://github.com/biomejs/biome", rev = "6b8f09c04394f2a9f72b89f9381724681169641a", version = "0.5.7" }
-biome_js_syntax = { git = "https://github.com/biomejs/biome", rev = "6b8f09c04394f2a9f72b89f9381724681169641a", version = "0.5.7" }
-biome_rowan = { git = "https://github.com/biomejs/biome", rev = "6b8f09c04394f2a9f72b89f9381724681169641a", version = "0.5.7" }
-biome_languages = { git = "https://github.com/biomejs/biome", rev = "6b8f09c04394f2a9f72b89f9381724681169641a", version = "0.1.0" }
+biome_js_parser = { git = "https://github.com/biomejs/biome", rev = "208146010946ce47fb9396b9a2d6c9b9226e2d25", version = "0.5.7" }
+biome_js_syntax = { git = "https://github.com/biomejs/biome", rev = "208146010946ce47fb9396b9a2d6c9b9226e2d25", version = "0.5.7" }
+biome_rowan = { git = "https://github.com/biomejs/biome", rev = "208146010946ce47fb9396b9a2d6c9b9226e2d25", version = "0.5.7" }
+biome_languages = { git = "https://github.com/biomejs/biome", rev = "208146010946ce47fb9396b9a2d6c9b9226e2d25", version = "0.1.0" }
 serde_json = "1"
 rayon = "1.7"
 
