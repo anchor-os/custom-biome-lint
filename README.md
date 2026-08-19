@@ -83,6 +83,25 @@ If your platform isn't listed, `npx custom-biome-lint` prints a clear error
 naming your platform/arch (and libc, on Linux) and the supported list — it
 never falls back to compiling from source.
 
+## IDE integration
+
+The `custom-biome-lint` binary is the engine behind the in-editor linting and
+quick-fix experience for these custom rules:
+
+- **VS Code** — the **Comment Doc Links** extension invokes the binary and turns
+  its diagnostics into editor markers, with code actions to apply a safe fix or
+  insert a `custom-biome-ignore-*` suppression comment.
+  - [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=manish-sharma-getanchorio.comment-doc-links)
+  - [Open VSX](https://open-vsx.org/extension/manish-sharma-getanchorio/comment-doc-links)
+- **JetBrains / WebStorm** — the companion plugin drives the same binary, so both
+  editors consume one contract and never drift.
+  - [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/33515-comment-doc-links)
+
+Both adapters read the machine-readable `--format json` output (protocol **v1**)
+and apply the `fixes[]` / `suppressions[]` edits the binary reports. The binary is
+the single source of truth for what a fix or suppression does — the editors never
+compute edit placement themselves.
+
 ### Building from source (contributors, git submodule consumers)
 
 Rust **is** required for this path. See
