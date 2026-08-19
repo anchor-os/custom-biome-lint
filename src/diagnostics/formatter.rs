@@ -146,6 +146,8 @@ pub fn format_reports(reports: &[FileReport], totals: &Totals) -> String {
 /// }
 /// ```
 pub fn format_reports_json(reports: &[FileReport], totals: &Totals) -> String {
+    // `PROTOCOL_VERSION` is the single source of truth for the version number.
+    let version = super::PROTOCOL_VERSION;
     let files: Vec<_> = reports
         .iter()
         .filter(|r| !r.violations.is_empty())
@@ -190,7 +192,7 @@ pub fn format_reports_json(reports: &[FileReport], totals: &Totals) -> String {
         .collect();
 
     let doc = json!({
-        "version": 1,
+        "version": version,
         "files": files,
         "summary": {
             "errors": totals.errors,

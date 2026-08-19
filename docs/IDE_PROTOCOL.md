@@ -6,8 +6,10 @@ binary emits and how an IDE should consume them. The Rust binary is the single
 source of truth — editor adapters live outside this repo.
 
 Protocol version: **1** (carried in the top-level `version` field of every JSON
-report). Bump the version in `src/cli/output.rs` (`PROTOCOL_VERSION`) only when
-a breaking change is required, and keep the prior version documented here.
+report and the `--rules` catalog). It is defined once as `PROTOCOL_VERSION` in
+`src/diagnostics/mod.rs` and read by both `format_reports_json` and the
+`--rules` output, so there is a single source of truth. Bump it only when a
+breaking change is required, and keep the prior version documented here.
 
 ## 1. Running on a single file
 
