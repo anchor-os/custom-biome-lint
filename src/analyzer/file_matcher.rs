@@ -71,11 +71,16 @@ impl GlobSet {
                     // path to `""`. Map it back to the filesystem root so
                     // discovery starts at `/` rather than the cwd.
                     PathBuf::from("/")
-                } else if joined.len() == 2 && is_drive_path(&joined) {
-                    // Bare Windows drive root `C:/`: `normalize` strips the
-                    // trailing slash, leaving `C:`. Re-add it so the path
-                    // resolves to the drive root (`C:/`) instead of a
-                    // drive-relative location.
+                } else if joined.len() == 2
+                    && (is_drive_path(&joined) || is_bare_drive_prefix(&joined))
+                {
+                    // Bare Windows drive root: a pattern like `C:/**/*.js` has a
+                    // literal prefix of just `["C:"]` (the `**` ends the prefix),
+                    // so `joined` is `C:` without a trailing slash. `is_drive_path`
+                    // requires a following `/`, so it misses this case. Re-add the
+                    // slash so the path resolves to the drive root `C:/` instead
+                    // of a drive-relative location (which then fails `root.exists()`
+                    // and makes the run emit no stdout).
                     PathBuf::from(format!("{joined}/"))
                 } else {
                     // Rebuild the literal prefix as a single path so Windows
@@ -141,6 +146,15 @@ fn is_drive_path(path: &str) -> bool {
     bytes.first().is_some_and(|c| c.is_ascii_alphabetic())
         && bytes.get(1) == Some(&b':')
         && bytes.get(2) == Some(&b'/')
+}
+
+/// True for a bare Windows drive prefix like `C:` (just a letter and colon, no
+/// path yet). Unlike [`is_drive_path`], this has no trailing slash, so it fires
+/// for the literal prefix of a pattern like `C:/**/*.js` where the `**` ends the
+/// prefix before any slash is consumed.
+fn is_bare_drive_prefix(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 fn literal_prefix(pattern: &str) -> Vec<&str> {
