@@ -34,4 +34,48 @@ All notable changes to this project are documented here. The format is based on
   `deep-param-prop-assign`, `no-for-statement`, `no-while-statement`,
   `no-do-while-statement`, `param-mutating-array-method-call`.
 
+## [0.4.5]
+
+### Fixed
+- Hardened the IDE machine-readable contract: `PROTOCOL_VERSION` is now a single
+  source of truth in `src/diagnostics/mod.rs`, read by both `--format json` and
+  `--rules` (previously two separate hardcoded `1`s). The version number is
+  unchanged (`1`), so this is internal-only — no editor adapter changes needed.
+- Fixed `docs/IDE_PROTOCOL.md`, which pointed the protocol-version bump at a
+  non-existent `PROTOCOL_VERSION` constant.
+
+### Added
+- Unicode coordinate regression tests: emoji on the same line before a
+  diagnostic (verifies byte vs character column), and production safe-fix /
+  suppression edits applied with multi-byte content earlier in the file (verifies
+  the byte range stays accurate through an apply → relint cycle).
+
+## [0.4.4]
+
+### Fixed
+- Windows CLI JSON regression: a bare Windows drive root now resolves to the
+  drive root (`C:/`) instead of a drive-relative path, so `--format json` emits
+  valid diagnostics on Windows instead of empty stdout.
+- Bare Windows drive-root pattern (`C:/**/*.js`) resolves to the drive root in
+  `GlobSet::root_dir`.
+
+### Changed
+- Biome parser git rev bumped to the current Biome `main`.
+
+### Added
+- Machine-readable IDE protocol (version `1`): `--format json` exposes stable
+  `startLine`/`startColumn` (always) plus `endLine`/`endColumn` (span rules),
+  `severity`, and structured `fixes` (safe) and `suppressions` suggestions;
+  `--rules` exposes the full rule catalog. See `docs/IDE_PROTOCOL.md`.
+- README "IDE integration" section documenting the Comment Doc Links extension
+  (VS Code + JetBrains/WebStorm) and marketplace links.
+
+## [0.4.3]
+
+### Changed
+- Maintenance release: version bump and release/build pipeline alignment.
+
+[0.4.5]: https://github.com/anchor-os/custom-biome-lint/releases/tag/v0.4.5
+[0.4.4]: https://github.com/anchor-os/custom-biome-lint/releases/tag/v0.4.4
+[0.4.3]: https://github.com/anchor-os/custom-biome-lint/releases/tag/v0.4.3
 [0.4.2]: https://github.com/anchor-os/custom-biome-lint/releases/tag/v0.4.2
