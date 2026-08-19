@@ -400,6 +400,55 @@ fn unicode_inside_string_before_fix_range() {
     assert!(rewritten.contains("const sel = createSelector(a, b);"));
 }
 
+#[test]
+fn unicode_emoji_same_line_byte_columns() {
+    // An emoji `😀` (4 UTF-8 bytes) precedes `Map` on the *same* line; the byte
+    // column of `Map` must count those bytes so an IDE converts to its own
+    // offset model correctly. The char column would be smaller.
+    let source = "const x = \"😀\"; const m = new Map();\n";
+    let (line, start_col, end_col) = locate(source, "Map");
+    let v = &check_source("no-native-map", source)[0];
+    assert_eq!(v.line, line);
+    assert_eq!(
+        v.col, start_col,
+        "col must be a byte column, not char column"
+    );
+    assert_eq!((v.end.unwrap().0, v.end.unwrap().1), (line, end_col));
+    let char_col: usize = source[..source.find("Map").unwrap()].chars().count() + 1;
+    assert_ne!(v.col, char_col, "col must NOT be a character column");
+}
+
+// §3.3 + §4 — a multi-byte literal earlier in the file must not shift the
+// safe-fix byte range. Applying the production edit removes the violation.
+#[test]
+fn unicode_safe_fix_edit_with_multibyte_before() {
+    let source = "const s = \"你好\";\nimport { createSelector } from 'reselect';\nconst sel = () => createSelector(a, b);\n";
+    let v = &check_source("no-arrow-function-create-selector", source)[0];
+    assert_eq!(v.fixes.len(), 1);
+    let edit = &v.fixes[0].edits[0];
+    let rewritten = apply_edits(source, std::slice::from_ref(edit)).expect("apply safe fix");
+    assert!(rewritten.contains("const sel = createSelector(a, b);"));
+    assert!(
+        check_source("no-arrow-function-create-selector", &rewritten).is_empty(),
+        "arrow violation removed after applying the byte-accurate fix"
+    );
+}
+
+// §3.3 + §4 — a multi-byte literal earlier in the file must not shift the
+// suppression byte range. Applying the production edit suppresses the violation.
+#[test]
+fn unicode_suppression_edit_with_multibyte_before() {
+    let source = "const s = \"😀\";\nconst m = new Map();\n";
+    let v = &check_source("no-native-map", source)[0];
+    assert_eq!(v.suppressions.len(), 1);
+    let edit = &v.suppressions[0].edits[0];
+    let rewritten = apply_edits(source, std::slice::from_ref(edit)).expect("apply suppression");
+    assert!(
+        check_source("no-native-map", &rewritten).is_empty(),
+        "violation suppressed via byte-accurate edit with multi-byte prefix"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // §3 — end-to-end fix/suppression application.
 // ---------------------------------------------------------------------------

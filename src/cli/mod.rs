@@ -19,7 +19,7 @@ use crate::analyzer::{analyze_file_enriched, discover_files, resolve_pattern, Gl
 use crate::autofix::Autofix;
 use crate::cache::{hash_content, CacheManager};
 use crate::config::{PackageConfig, RuleSeverity, CONFIG_KEY};
-use crate::diagnostics::{tally, FileReport, Severity, Violation};
+use crate::diagnostics::{tally, FileReport, Severity, Violation, PROTOCOL_VERSION};
 use crate::fixer::Fixer;
 use crate::rules::RuleRegistry;
 use crate::{dlog, vlog};
@@ -578,7 +578,7 @@ fn print_rule_metadata(registry: &RuleRegistry) {
         })
         .collect();
 
-    let doc = json!({ "version": 1, "rules": rules });
+    let doc = json!({ "version": PROTOCOL_VERSION, "rules": rules });
     // A plain `json!` tree of owned values never fails to serialize.
     println!(
         "{}",
