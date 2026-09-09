@@ -77,24 +77,31 @@ impl Suppressions {
 /// Every suppression comment in `source`, in source order.
 pub fn find_suppression_comments(source: &str) -> Vec<SuppressionComment> {
     let mut found = Vec::new();
+    let mut state = Lex::Code;
 
     for (index, text) in source.lines().enumerate() {
         let line_no = index + 1;
-        let Some((body_offset, comment)) = comment_body(text) else {
+        let scan = scan_line(text, state);
+        state = scan.carry;
+
+        // Search each comment region on the line, not the rest of the line: a
+        // marker in code or in a string after a comment closes is not a
+        // suppression. Offsets stay absolute so `append_at` remains a valid
+        // splice point in `text`.
+        let found_marker = scan.comments.iter().find_map(|&(from, to)| {
+            let body = &text[from..to];
+            if let Some(pos) = body.find(IGNORE_NEXT_LINE) {
+                Some((IGNORE_NEXT_LINE, line_no + 1, from + pos))
+            } else {
+                body.find(IGNORE_LINE)
+                    .map(|pos| (IGNORE_LINE, line_no, from + pos))
+            }
+        });
+        let Some((marker, target_line, marker_at)) = found_marker else {
             continue;
         };
 
-        // Checked before IGNORE_LINE only for clarity; the two markers are not
-        // substrings of one another, so order does not affect matching.
-        let (marker, target_line, marker_pos) = if let Some(pos) = comment.find(IGNORE_NEXT_LINE) {
-            (IGNORE_NEXT_LINE, line_no + 1, pos)
-        } else if let Some(pos) = comment.find(IGNORE_LINE) {
-            (IGNORE_LINE, line_no, pos)
-        } else {
-            continue;
-        };
-
-        let rest_offset = body_offset + marker_pos + marker.len();
+        let rest_offset = marker_at + marker.len();
         let (rules, rules_end) = parse_rule_names(&text[rest_offset..]);
 
         found.push(SuppressionComment {
@@ -109,20 +116,125 @@ pub fn find_suppression_comments(source: &str) -> Vec<SuppressionComment> {
     found
 }
 
-/// The text following the first `//` or `/*` on a line, with its byte offset, so
-/// that a marker appearing inside a string literal is not treated as a
-/// suppression.
-fn comment_body(line: &str) -> Option<(usize, &str)> {
-    let slash = line.find("//");
-    let block = line.find("/*");
-    let start = match (slash, block) {
-        (Some(a), Some(b)) => a.min(b),
-        (Some(a), None) => a,
-        (None, Some(b)) => b,
-        (None, None) => return None,
+/// Lexical state at a line boundary.
+///
+/// Shared with the fixer so that both the read side (finding suppressions) and
+/// the write side (placing them) agree on what counts as a comment. It does not
+/// understand regex literals or `${}` nesting; an unterminated `'` or `"` is
+/// treated as a scan desync and resynced to code at end of line, which is why a
+/// regex containing a quote cannot silently disable the rest of a file.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Lex {
+    Code,
+    LineComment,
+    BlockComment,
+    Single,
+    Double,
+    Template,
+}
+
+/// What one line's scan established.
+pub(crate) struct LineScan {
+    /// Byte ranges of the comment *bodies* on this line, in order — each one
+    /// starting just past its `//` or `/*` and ending at the matching `*/` or at
+    /// end of line. Code and string literals are excluded, so a marker outside
+    /// these ranges is not a suppression.
+    pub(crate) comments: Vec<(usize, usize)>,
+    /// State at the final byte, before the end-of-line resync. The fixer needs
+    /// this to decide whether a trailing comment can be appended.
+    pub(crate) end: Lex,
+    /// State to carry into the next line, after resync.
+    pub(crate) carry: Lex,
+}
+
+/// Scan one line starting from `start`.
+pub(crate) fn scan_line(content: &str, start: Lex) -> LineScan {
+    let mut state = start;
+    let mut comments = Vec::new();
+    // Start of the comment body currently open, if any. A line that begins inside
+    // a block comment is comment content from its very first byte.
+    let mut open_from = if start == Lex::BlockComment {
+        Some(0usize)
+    } else {
+        None
     };
-    let body = start + 2;
-    Some((body, &line[body..]))
+    let bytes = content.as_bytes();
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        let ch = bytes[i];
+        let next = bytes.get(i + 1).copied();
+
+        match state {
+            Lex::LineComment => break,
+            Lex::Code => match ch {
+                b'/' if next == Some(b'/') => {
+                    state = Lex::LineComment;
+                    i += 2;
+                    open_from = Some(i);
+                    continue;
+                }
+                b'/' if next == Some(b'*') => {
+                    state = Lex::BlockComment;
+                    i += 2;
+                    open_from = Some(i);
+                    continue;
+                }
+                b'\'' => state = Lex::Single,
+                b'"' => state = Lex::Double,
+                b'`' => state = Lex::Template,
+                _ => {}
+            },
+            Lex::BlockComment => {
+                if ch == b'*' && next == Some(b'/') {
+                    if let Some(from) = open_from.take() {
+                        comments.push((from, i));
+                    }
+                    state = Lex::Code;
+                    i += 2;
+                    continue;
+                }
+            }
+            Lex::Single | Lex::Double | Lex::Template => {
+                if ch == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                let closer = match state {
+                    Lex::Single => b'\'',
+                    Lex::Double => b'"',
+                    _ => b'`',
+                };
+                if ch == closer {
+                    state = Lex::Code;
+                }
+            }
+        }
+        i += 1;
+    }
+
+    // A line comment, or a block comment still open at end of line, runs to EOL.
+    if let Some(from) = open_from {
+        comments.push((from, content.len()));
+    }
+
+    let end = state;
+    let carry = match state {
+        // A line comment never continues onto the next line.
+        Lex::LineComment => Lex::Code,
+        // Quoted strings only span lines via a backslash continuation. Without
+        // one the scan was thrown off — a regex literal containing a quote is the
+        // usual cause — so resync instead of treating the rest of the file as
+        // string content.
+        Lex::Single | Lex::Double if !content.trim_end().ends_with('\\') => Lex::Code,
+        other => other,
+    };
+
+    LineScan {
+        comments,
+        end,
+        carry,
+    }
 }
 
 /// Comma- and/or space-separated rule names, plus the byte offset in `rest` just
@@ -203,8 +315,87 @@ mod tests {
 
     #[test]
     fn marker_in_string_literal_is_not_a_suppression() {
+        // The string contains a comment opener as well as the marker. Before the
+        // lexical scan this suppressed the line: the scan found the `//` inside
+        // the quotes and treated the rest of the line as a directive.
+        let s = Suppressions::parse(
+            "const help = \"write // custom-biome-ignore-line no-native-map\";\n",
+        );
+        assert!(!s.is_suppressed(1, "no-native-map"));
+    }
+
+    #[test]
+    fn marker_text_with_no_comment_opener_is_not_a_suppression() {
+        // The case the old version of the test above actually exercised: there is
+        // no `//` or `/*` anywhere, so no comment is found for the trivial reason.
         let s = Suppressions::parse("const x = 'custom-biome-ignore-line no-native-map';\n");
         assert!(!s.is_suppressed(1, "no-native-map"));
+    }
+
+    #[test]
+    fn marker_in_a_string_after_a_closed_block_comment_is_not_a_suppression() {
+        // Raised by review on the first version of this fix: bounding the search
+        // to "after the comment opener" is not the same as bounding it to the
+        // comment. Once `*/` closes, the rest of the line is code again.
+        let s = Suppressions::parse(
+            "/* note */ const t = \"custom-biome-ignore-next-line no-native-map\";\nnew Map();\n",
+        );
+        assert!(!s.is_suppressed(2, "no-native-map"));
+    }
+
+    #[test]
+    fn marker_in_bare_code_after_a_closed_block_comment_is_not_a_suppression() {
+        let s = Suppressions::parse("/* n */ custom-biome-ignore-line no-native-map\n");
+        assert!(!s.is_suppressed(1, "no-native-map"));
+    }
+
+    #[test]
+    fn marker_in_a_second_comment_on_the_same_line_still_works() {
+        // Every comment region on the line is searched, not just the first, so
+        // bounding the search does not lose a legitimate trailing marker.
+        let s =
+            Suppressions::parse("/* first */ x; /* custom-biome-ignore-line no-native-map */\n");
+        assert!(s.is_suppressed(1, "no-native-map"));
+    }
+
+    #[test]
+    fn marker_inside_a_continued_block_comment_is_a_suppression() {
+        // The opposite defect, also fixed here: before the lexical scan, a line
+        // inside a block comment contained no `//` or `/*` of its own, so the
+        // marker was not found at all and a legitimate suppression was ignored.
+        let s = Suppressions::parse(
+            "/* opening\n   custom-biome-ignore-next-line no-native-map */\nnew Map();\n",
+        );
+        assert!(s.is_suppressed(3, "no-native-map"));
+    }
+
+    #[test]
+    fn real_trailing_marker_after_a_string_containing_slashes_still_works() {
+        // The scan must not over-correct: the quotes close, so the `//` that
+        // follows them is a genuine comment.
+        let s = Suppressions::parse(
+            "const u = \"https://example.com\"; // custom-biome-ignore-line no-native-map\n",
+        );
+        assert!(s.is_suppressed(1, "no-native-map"));
+    }
+
+    #[test]
+    fn marker_inside_a_multiline_template_is_not_a_suppression() {
+        let s = Suppressions::parse(
+            "const t = `line one\n// custom-biome-ignore-next-line no-native-map\nstill inside`;\nnew Map();\n",
+        );
+        assert!(!s.is_suppressed(3, "no-native-map"));
+        assert!(!s.is_suppressed(4, "no-native-map"));
+    }
+
+    #[test]
+    fn a_regex_containing_a_quote_does_not_disable_later_suppressions() {
+        // An unterminated quote is a scan desync, resynced at end of line, so it
+        // cannot silently switch suppressions off for the rest of the file.
+        let s = Suppressions::parse(
+            "const re = /it's fine/;\nx; // custom-biome-ignore-line no-native-map\n",
+        );
+        assert!(s.is_suppressed(2, "no-native-map"));
     }
 
     #[test]
