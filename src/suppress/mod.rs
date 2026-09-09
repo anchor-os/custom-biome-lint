@@ -83,22 +83,25 @@ pub fn find_suppression_comments(source: &str) -> Vec<SuppressionComment> {
         let line_no = index + 1;
         let scan = scan_line(text, state);
         state = scan.carry;
-        let Some(body_offset) = scan.comment_body else {
+
+        // Search each comment region on the line, not the rest of the line: a
+        // marker in code or in a string after a comment closes is not a
+        // suppression. Offsets stay absolute so `append_at` remains a valid
+        // splice point in `text`.
+        let found_marker = scan.comments.iter().find_map(|&(from, to)| {
+            let body = &text[from..to];
+            if let Some(pos) = body.find(IGNORE_NEXT_LINE) {
+                Some((IGNORE_NEXT_LINE, line_no + 1, from + pos))
+            } else {
+                body.find(IGNORE_LINE)
+                    .map(|pos| (IGNORE_LINE, line_no, from + pos))
+            }
+        });
+        let Some((marker, target_line, marker_at)) = found_marker else {
             continue;
         };
-        let comment = &text[body_offset..];
 
-        // Checked before IGNORE_LINE only for clarity; the two markers are not
-        // substrings of one another, so order does not affect matching.
-        let (marker, target_line, marker_pos) = if let Some(pos) = comment.find(IGNORE_NEXT_LINE) {
-            (IGNORE_NEXT_LINE, line_no + 1, pos)
-        } else if let Some(pos) = comment.find(IGNORE_LINE) {
-            (IGNORE_LINE, line_no, pos)
-        } else {
-            continue;
-        };
-
-        let rest_offset = body_offset + marker_pos + marker.len();
+        let rest_offset = marker_at + marker.len();
         let (rules, rules_end) = parse_rule_names(&text[rest_offset..]);
 
         found.push(SuppressionComment {
@@ -132,9 +135,11 @@ pub(crate) enum Lex {
 
 /// What one line's scan established.
 pub(crate) struct LineScan {
-    /// Byte offset just past the first `//` or `/*` that opens **while in code**,
-    /// so a marker inside a string literal is not a suppression.
-    pub(crate) comment_body: Option<usize>,
+    /// Byte ranges of the comment *bodies* on this line, in order — each one
+    /// starting just past its `//` or `/*` and ending at the matching `*/` or at
+    /// end of line. Code and string literals are excluded, so a marker outside
+    /// these ranges is not a suppression.
+    pub(crate) comments: Vec<(usize, usize)>,
     /// State at the final byte, before the end-of-line resync. The fixer needs
     /// this to decide whether a trailing comment can be appended.
     pub(crate) end: Lex,
@@ -145,7 +150,14 @@ pub(crate) struct LineScan {
 /// Scan one line starting from `start`.
 pub(crate) fn scan_line(content: &str, start: Lex) -> LineScan {
     let mut state = start;
-    let mut opened_at = None;
+    let mut comments = Vec::new();
+    // Start of the comment body currently open, if any. A line that begins inside
+    // a block comment is comment content from its very first byte.
+    let mut open_from = if start == Lex::BlockComment {
+        Some(0usize)
+    } else {
+        None
+    };
     let bytes = content.as_bytes();
     let mut i = 0usize;
 
@@ -159,17 +171,13 @@ pub(crate) fn scan_line(content: &str, start: Lex) -> LineScan {
                 b'/' if next == Some(b'/') => {
                     state = Lex::LineComment;
                     i += 2;
-                    if opened_at.is_none() {
-                        opened_at = Some(i);
-                    }
+                    open_from = Some(i);
                     continue;
                 }
                 b'/' if next == Some(b'*') => {
                     state = Lex::BlockComment;
                     i += 2;
-                    if opened_at.is_none() {
-                        opened_at = Some(i);
-                    }
+                    open_from = Some(i);
                     continue;
                 }
                 b'\'' => state = Lex::Single,
@@ -179,6 +187,9 @@ pub(crate) fn scan_line(content: &str, start: Lex) -> LineScan {
             },
             Lex::BlockComment => {
                 if ch == b'*' && next == Some(b'/') {
+                    if let Some(from) = open_from.take() {
+                        comments.push((from, i));
+                    }
                     state = Lex::Code;
                     i += 2;
                     continue;
@@ -202,10 +213,9 @@ pub(crate) fn scan_line(content: &str, start: Lex) -> LineScan {
         i += 1;
     }
 
-    // A line that begins inside a block comment is comment content from its very
-    // first byte, so a marker on it is a suppression even with no opener here.
-    if opened_at.is_none() && start == Lex::BlockComment {
-        opened_at = Some(0);
+    // A line comment, or a block comment still open at end of line, runs to EOL.
+    if let Some(from) = open_from {
+        comments.push((from, content.len()));
     }
 
     let end = state;
@@ -221,7 +231,7 @@ pub(crate) fn scan_line(content: &str, start: Lex) -> LineScan {
     };
 
     LineScan {
-        comment_body: opened_at,
+        comments,
         end,
         carry,
     }
@@ -320,6 +330,43 @@ mod tests {
         // no `//` or `/*` anywhere, so no comment is found for the trivial reason.
         let s = Suppressions::parse("const x = 'custom-biome-ignore-line no-native-map';\n");
         assert!(!s.is_suppressed(1, "no-native-map"));
+    }
+
+    #[test]
+    fn marker_in_a_string_after_a_closed_block_comment_is_not_a_suppression() {
+        // Raised by review on the first version of this fix: bounding the search
+        // to "after the comment opener" is not the same as bounding it to the
+        // comment. Once `*/` closes, the rest of the line is code again.
+        let s = Suppressions::parse(
+            "/* note */ const t = \"custom-biome-ignore-next-line no-native-map\";\nnew Map();\n",
+        );
+        assert!(!s.is_suppressed(2, "no-native-map"));
+    }
+
+    #[test]
+    fn marker_in_bare_code_after_a_closed_block_comment_is_not_a_suppression() {
+        let s = Suppressions::parse("/* n */ custom-biome-ignore-line no-native-map\n");
+        assert!(!s.is_suppressed(1, "no-native-map"));
+    }
+
+    #[test]
+    fn marker_in_a_second_comment_on_the_same_line_still_works() {
+        // Every comment region on the line is searched, not just the first, so
+        // bounding the search does not lose a legitimate trailing marker.
+        let s =
+            Suppressions::parse("/* first */ x; /* custom-biome-ignore-line no-native-map */\n");
+        assert!(s.is_suppressed(1, "no-native-map"));
+    }
+
+    #[test]
+    fn marker_inside_a_continued_block_comment_is_a_suppression() {
+        // The opposite defect, also fixed here: before the lexical scan, a line
+        // inside a block comment contained no `//` or `/*` of its own, so the
+        // marker was not found at all and a legitimate suppression was ignored.
+        let s = Suppressions::parse(
+            "/* opening\n   custom-biome-ignore-next-line no-native-map */\nnew Map();\n",
+        );
+        assert!(s.is_suppressed(3, "no-native-map"));
     }
 
     #[test]
