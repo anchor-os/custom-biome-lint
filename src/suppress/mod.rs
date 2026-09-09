@@ -77,12 +77,16 @@ impl Suppressions {
 /// Every suppression comment in `source`, in source order.
 pub fn find_suppression_comments(source: &str) -> Vec<SuppressionComment> {
     let mut found = Vec::new();
+    let mut state = Lex::Code;
 
     for (index, text) in source.lines().enumerate() {
         let line_no = index + 1;
-        let Some((body_offset, comment)) = comment_body(text) else {
+        let scan = scan_line(text, state);
+        state = scan.carry;
+        let Some(body_offset) = scan.comment_body else {
             continue;
         };
+        let comment = &text[body_offset..];
 
         // Checked before IGNORE_LINE only for clarity; the two markers are not
         // substrings of one another, so order does not affect matching.
@@ -109,20 +113,118 @@ pub fn find_suppression_comments(source: &str) -> Vec<SuppressionComment> {
     found
 }
 
-/// The text following the first `//` or `/*` on a line, with its byte offset, so
-/// that a marker appearing inside a string literal is not treated as a
-/// suppression.
-fn comment_body(line: &str) -> Option<(usize, &str)> {
-    let slash = line.find("//");
-    let block = line.find("/*");
-    let start = match (slash, block) {
-        (Some(a), Some(b)) => a.min(b),
-        (Some(a), None) => a,
-        (None, Some(b)) => b,
-        (None, None) => return None,
+/// Lexical state at a line boundary.
+///
+/// Shared with the fixer so that both the read side (finding suppressions) and
+/// the write side (placing them) agree on what counts as a comment. It does not
+/// understand regex literals or `${}` nesting; an unterminated `'` or `"` is
+/// treated as a scan desync and resynced to code at end of line, which is why a
+/// regex containing a quote cannot silently disable the rest of a file.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Lex {
+    Code,
+    LineComment,
+    BlockComment,
+    Single,
+    Double,
+    Template,
+}
+
+/// What one line's scan established.
+pub(crate) struct LineScan {
+    /// Byte offset just past the first `//` or `/*` that opens **while in code**,
+    /// so a marker inside a string literal is not a suppression.
+    pub(crate) comment_body: Option<usize>,
+    /// State at the final byte, before the end-of-line resync. The fixer needs
+    /// this to decide whether a trailing comment can be appended.
+    pub(crate) end: Lex,
+    /// State to carry into the next line, after resync.
+    pub(crate) carry: Lex,
+}
+
+/// Scan one line starting from `start`.
+pub(crate) fn scan_line(content: &str, start: Lex) -> LineScan {
+    let mut state = start;
+    let mut opened_at = None;
+    let bytes = content.as_bytes();
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        let ch = bytes[i];
+        let next = bytes.get(i + 1).copied();
+
+        match state {
+            Lex::LineComment => break,
+            Lex::Code => match ch {
+                b'/' if next == Some(b'/') => {
+                    state = Lex::LineComment;
+                    i += 2;
+                    if opened_at.is_none() {
+                        opened_at = Some(i);
+                    }
+                    continue;
+                }
+                b'/' if next == Some(b'*') => {
+                    state = Lex::BlockComment;
+                    i += 2;
+                    if opened_at.is_none() {
+                        opened_at = Some(i);
+                    }
+                    continue;
+                }
+                b'\'' => state = Lex::Single,
+                b'"' => state = Lex::Double,
+                b'`' => state = Lex::Template,
+                _ => {}
+            },
+            Lex::BlockComment => {
+                if ch == b'*' && next == Some(b'/') {
+                    state = Lex::Code;
+                    i += 2;
+                    continue;
+                }
+            }
+            Lex::Single | Lex::Double | Lex::Template => {
+                if ch == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                let closer = match state {
+                    Lex::Single => b'\'',
+                    Lex::Double => b'"',
+                    _ => b'`',
+                };
+                if ch == closer {
+                    state = Lex::Code;
+                }
+            }
+        }
+        i += 1;
+    }
+
+    // A line that begins inside a block comment is comment content from its very
+    // first byte, so a marker on it is a suppression even with no opener here.
+    if opened_at.is_none() && start == Lex::BlockComment {
+        opened_at = Some(0);
+    }
+
+    let end = state;
+    let carry = match state {
+        // A line comment never continues onto the next line.
+        Lex::LineComment => Lex::Code,
+        // Quoted strings only span lines via a backslash continuation. Without
+        // one the scan was thrown off — a regex literal containing a quote is the
+        // usual cause — so resync instead of treating the rest of the file as
+        // string content.
+        Lex::Single | Lex::Double if !content.trim_end().ends_with('\\') => Lex::Code,
+        other => other,
     };
-    let body = start + 2;
-    Some((body, &line[body..]))
+
+    LineScan {
+        comment_body: opened_at,
+        end,
+        carry,
+    }
 }
 
 /// Comma- and/or space-separated rule names, plus the byte offset in `rest` just
@@ -203,8 +305,50 @@ mod tests {
 
     #[test]
     fn marker_in_string_literal_is_not_a_suppression() {
+        // The string contains a comment opener as well as the marker. Before the
+        // lexical scan this suppressed the line: the scan found the `//` inside
+        // the quotes and treated the rest of the line as a directive.
+        let s = Suppressions::parse(
+            "const help = \"write // custom-biome-ignore-line no-native-map\";\n",
+        );
+        assert!(!s.is_suppressed(1, "no-native-map"));
+    }
+
+    #[test]
+    fn marker_text_with_no_comment_opener_is_not_a_suppression() {
+        // The case the old version of the test above actually exercised: there is
+        // no `//` or `/*` anywhere, so no comment is found for the trivial reason.
         let s = Suppressions::parse("const x = 'custom-biome-ignore-line no-native-map';\n");
         assert!(!s.is_suppressed(1, "no-native-map"));
+    }
+
+    #[test]
+    fn real_trailing_marker_after_a_string_containing_slashes_still_works() {
+        // The scan must not over-correct: the quotes close, so the `//` that
+        // follows them is a genuine comment.
+        let s = Suppressions::parse(
+            "const u = \"https://example.com\"; // custom-biome-ignore-line no-native-map\n",
+        );
+        assert!(s.is_suppressed(1, "no-native-map"));
+    }
+
+    #[test]
+    fn marker_inside_a_multiline_template_is_not_a_suppression() {
+        let s = Suppressions::parse(
+            "const t = `line one\n// custom-biome-ignore-next-line no-native-map\nstill inside`;\nnew Map();\n",
+        );
+        assert!(!s.is_suppressed(3, "no-native-map"));
+        assert!(!s.is_suppressed(4, "no-native-map"));
+    }
+
+    #[test]
+    fn a_regex_containing_a_quote_does_not_disable_later_suppressions() {
+        // An unterminated quote is a scan desync, resynced at end of line, so it
+        // cannot silently switch suppressions off for the rest of the file.
+        let s = Suppressions::parse(
+            "const re = /it's fine/;\nx; // custom-biome-ignore-line no-native-map\n",
+        );
+        assert!(s.is_suppressed(2, "no-native-map"));
     }
 
     #[test]

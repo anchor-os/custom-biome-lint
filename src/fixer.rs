@@ -16,7 +16,9 @@ use biome_rowan::AstNode;
 
 use crate::analyzer::runner::FileContext;
 use crate::diagnostics::Violation;
-use crate::suppress::{find_suppression_comments, Suppressions, IGNORE_LINE, IGNORE_NEXT_LINE};
+use crate::suppress::{
+    find_suppression_comments, scan_line, Lex, Suppressions, IGNORE_LINE, IGNORE_NEXT_LINE,
+};
 
 /// A trailing comment is only used when the resulting line stays within this
 /// width; longer lines get the comment on its own line above.
@@ -638,89 +640,18 @@ fn line_offsets(lines: &[(&str, &str)]) -> Vec<usize> {
     offsets
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Lex {
-    Code,
-    LineComment,
-    BlockComment,
-    Single,
-    Double,
-    Template,
-}
-
 /// Lexical state at the start and end of each line.
 ///
-/// This does not understand regex literals or `${}` nesting. Both blind spots
-/// leave it believing it is inside a string, which only ever makes the fixer
-/// decline a placement — never accept an unsafe one.
+/// Thin wrapper over the shared scanner in `crate::suppress`, so the write side
+/// and the read side cannot disagree about what a comment is.
 fn line_states(lines: &[(&str, &str)]) -> Vec<(Lex, Lex)> {
     let mut states = Vec::with_capacity(lines.len());
     let mut state = Lex::Code;
 
     for (content, _) in lines {
-        let start = state;
-        let bytes = content.as_bytes();
-        let mut i = 0usize;
-
-        while i < bytes.len() {
-            let ch = bytes[i];
-            let next = bytes.get(i + 1).copied();
-
-            match state {
-                Lex::LineComment => break,
-                Lex::Code => match ch {
-                    b'/' if next == Some(b'/') => {
-                        state = Lex::LineComment;
-                        i += 2;
-                        continue;
-                    }
-                    b'/' if next == Some(b'*') => {
-                        state = Lex::BlockComment;
-                        i += 2;
-                        continue;
-                    }
-                    b'\'' => state = Lex::Single,
-                    b'"' => state = Lex::Double,
-                    b'`' => state = Lex::Template,
-                    _ => {}
-                },
-                Lex::BlockComment => {
-                    if ch == b'*' && next == Some(b'/') {
-                        state = Lex::Code;
-                        i += 2;
-                        continue;
-                    }
-                }
-                Lex::Single | Lex::Double | Lex::Template => {
-                    if ch == b'\\' {
-                        i += 2;
-                        continue;
-                    }
-                    let closer = match state {
-                        Lex::Single => b'\'',
-                        Lex::Double => b'"',
-                        _ => b'`',
-                    };
-                    if ch == closer {
-                        state = Lex::Code;
-                    }
-                }
-            }
-            i += 1;
-        }
-
-        let end = state;
-        state = match state {
-            // A line comment never continues onto the next line.
-            Lex::LineComment => Lex::Code,
-            // Quoted strings only span lines via a backslash continuation.
-            // Without one the scan was thrown off — a regex literal containing a
-            // quote is the usual cause — so resync instead of treating the rest
-            // of the file as string content.
-            Lex::Single | Lex::Double if !content.trim_end().ends_with('\\') => Lex::Code,
-            other => other,
-        };
-        states.push((start, end));
+        let scan = scan_line(content, state);
+        states.push((state, scan.end));
+        state = scan.carry;
     }
 
     states
